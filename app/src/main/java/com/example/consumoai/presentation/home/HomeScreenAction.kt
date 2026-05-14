@@ -1,8 +1,7 @@
 ﻿package com.example.consumoai.presentation.home
-import com.example.consumoai.domain.model.ConsumptionPeriod
+
 sealed interface HomeScreenAction {
-    data class OnPeriodSelected(
-        val period: ConsumptionPeriod
-    ) : HomeScreenAction
-    data object OnClearError : HomeScreenAction
+    data object OnImportSampleNfceUrlsClick : HomeScreenAction
+    data object OnAnalyzeStoredReceiptsClick : HomeScreenAction
+    data object OnClearReceiptsClick : HomeScreenAction
 }

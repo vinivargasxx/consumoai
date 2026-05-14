@@ -1,32 +1,98 @@
 package com.example.consumoai.core.di
 
-import com.example.consumoai.domain.usecase.AnalyzeConsumptionByPeriodUseCase
+import com.example.consumoai.domain.insights.ConsumptionInsightsEngine
+import com.example.consumoai.domain.insights.DefaultConsumptionInsightsEngine
+import com.example.consumoai.domain.usecase.AnalyzeReceiptFromQrCodeUrlUseCase
+import com.example.consumoai.domain.usecase.AnalyzeStoredReceiptsUseCase
+import com.example.consumoai.domain.usecase.BuildAnonymizedConsumptionExportUseCase
+import com.example.consumoai.domain.usecase.BuildConsumptionModelInputUseCase
+import com.example.consumoai.domain.usecase.BuildConsumptionProfileSummaryUseCase
 import com.example.consumoai.domain.usecase.CalculateConsumptionMetricsUseCase
+import com.example.consumoai.domain.usecase.ClearReceiptsUseCase
 import com.example.consumoai.domain.usecase.ClassifyConsumptionProfileUseCase
-import com.example.consumoai.domain.usecase.GetPeriodDateRangeUseCase
+import com.example.consumoai.domain.usecase.ClassifyProductsUseCase
+import com.example.consumoai.domain.usecase.ConsumptionFeatureSanitizer
+import com.example.consumoai.domain.usecase.GetStoredReceiptsSummaryUseCase
+import com.example.consumoai.domain.usecase.ImportSampleNfceReceiptsUseCase
+import com.example.consumoai.domain.usecase.ProfileExplanationBuilder
+import com.example.consumoai.domain.usecase.SaveReceiptUseCase
 import org.koin.dsl.module
 
 val domainModule = module {
 
     factory {
-        GetPeriodDateRangeUseCase()
+        AnalyzeReceiptFromQrCodeUrlUseCase(
+            nfceQrCodeDataSource = get(),
+            classifyProductsUseCase = get()
+        )
     }
 
     factory {
-        CalculateConsumptionMetricsUseCase()
+        ClassifyProductsUseCase(
+            productClassifier = get()
+        )
+    }
+
+    factory { CalculateConsumptionMetricsUseCase() }
+
+    factory { BuildConsumptionModelInputUseCase() }
+
+    factory { ConsumptionFeatureSanitizer() }
+
+    factory { BuildConsumptionProfileSummaryUseCase() }
+
+    factory { ProfileExplanationBuilder() }
+
+    factory { BuildAnonymizedConsumptionExportUseCase() }
+
+    factory {
+        ClassifyConsumptionProfileUseCase(
+            consumptionBehaviorClassifier = get()
+        )
+    }
+
+
+    factory {
+        SaveReceiptUseCase(
+            receiptRepository = get()
+        )
     }
 
     factory {
-        ClassifyConsumptionProfileUseCase()
+        ImportSampleNfceReceiptsUseCase(
+            analyzeReceiptFromQrCodeUrlUseCase = get(),
+            saveReceiptUseCase = get(),
+            receiptRepository = get()
+        )
+    }
+
+    single<ConsumptionInsightsEngine> {
+        DefaultConsumptionInsightsEngine()
     }
 
     factory {
-        AnalyzeConsumptionByPeriodUseCase(
+        AnalyzeStoredReceiptsUseCase(
             receiptRepository = get(),
-            getPeriodDateRangeUseCase = get(),
             calculateConsumptionMetricsUseCase = get(),
-            classifyConsumptionProfileUseCase = get()
+            buildConsumptionModelInputUseCase = get(),
+            classifyConsumptionProfileUseCase = get(),
+            insightsEngine = get(),
+            consumptionFeatureSanitizer = get(),
+            buildConsumptionProfileSummaryUseCase = get(),
+            profileExplanationBuilder = get(),
+            buildAnonymizedConsumptionExportUseCase = get()
+        )
+    }
+
+    factory {
+        GetStoredReceiptsSummaryUseCase(
+            receiptRepository = get()
+        )
+    }
+
+    factory {
+        ClearReceiptsUseCase(
+            receiptRepository = get()
         )
     }
 }
-

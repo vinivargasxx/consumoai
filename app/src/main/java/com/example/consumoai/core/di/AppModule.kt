@@ -7,8 +7,10 @@ import org.koin.dsl.module
 val appModule = module {
     viewModel {
         HomeViewModel(
-            analyzeConsumptionByPeriodUseCase = get()
+            importSampleNfceReceiptsUseCase = get(),
+            analyzeStoredReceiptsUseCase = get(),
+            getStoredReceiptsSummaryUseCase = get(),
+            clearReceiptsUseCase = get()
         )
     }
 }
-
