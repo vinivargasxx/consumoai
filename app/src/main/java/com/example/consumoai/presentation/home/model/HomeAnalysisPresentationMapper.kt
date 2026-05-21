@@ -2,98 +2,164 @@ package com.example.consumoai.presentation.home.model
 
 import com.example.consumoai.domain.model.BehaviorClassificationSource
 import com.example.consumoai.domain.model.ConsumptionBehaviorProfile
-import com.example.consumoai.domain.model.ConsumptionInsight
-import com.example.consumoai.domain.model.InsightSeverity
+import com.example.consumoai.domain.model.FallbackReason
+import com.example.consumoai.domain.model.MODEL_BACKEND_IDENTIFIER
+import com.example.consumoai.domain.model.MODEL_CLASS_COUNT
+import com.example.consumoai.domain.model.MODEL_FEATURE_COUNT
+import com.example.consumoai.domain.model.MODEL_INTERNAL_METRICS_COUNT
+import com.example.consumoai.domain.model.MODEL_NAME
 import com.example.consumoai.domain.model.ProfileInterpretationType
 import com.example.consumoai.domain.model.ProductCategory
 import com.example.consumoai.domain.model.StoredConsumptionAnalysis
 import java.util.Locale
 
 fun StoredConsumptionAnalysis.toHomeAnalysisPresentation(): HomeAnalysisPresentation {
+	val selectedInput = modelInput
+	val metrics = this.metrics
 	val summary = behaviorResult.profileSummary
-	val compositionLines = summary?.profileComposition
-		?.map { composition ->
-			"${composition.profile.toMainCharacteristicName()}: ${(composition.percentage / 100.0).toPercentageText()}"
-		}
-		?: behaviorResult.profileScores
-			.entries
-			.sortedByDescending { it.value }
-			.take(3)
-			.map { (profile, score) ->
-				"${profile.toMainCharacteristicName()}: ${score.toPercentageText()}"
-			}
-
-	val observationLines = behaviorAnalysis
-		?.insights
-		.orEmpty()
-		.sortedWith(compareByDescending<ConsumptionInsight> { it.severity.toOrder() }.thenBy { it.title })
-		.take(5)
-		.map { it.description.trim().trimEnd('.') + "." }
-
-	val characteristics = buildList {
-		summary?.humanReadableDescription?.let { add(it) }
-		profileExplanation?.let { add(it) }
-		addAll(compositionLines)
-		if (observationLines.isNotEmpty()) {
-			add("Observações:")
-			addAll(observationLines)
-		}
-	}
 
 	val technical = mutableListOf<Pair<String, String>>()
-	technical += "Versão do input" to modelInput.version
-	technical += "Quantidade de features" to modelInput.features.size.toString()
+	technical += "Modelo" to MODEL_NAME
+	technical += "Backend" to (behaviorResult.backendModelUsed ?: MODEL_BACKEND_IDENTIFIER)
+	technical += "Features enviadas" to "$MODEL_FEATURE_COUNT"
+	technical += "Versão" to (behaviorResult.requestedInputVersion ?: selectedInput.version)
+	technical += "Classes" to MODEL_CLASS_COUNT.toString()
 	technical += "Fonte da classificação" to behaviorResult.source.toTechnicalLabel()
+	technical += "Confiança" to behaviorResult.confidence.toPercentageText()
 	technical += "Tipo de interpretação" to (summary?.interpretationType?.name ?: ProfileInterpretationType.PURE_PROFILE.name)
-	technical += "Resumo técnico" to "input=${modelInput.version}, features=${modelInput.features.size}, notas=${metrics.totalReceipts}, itens=${metrics.totalItems}"
 	technical += "Itens classificados" to metrics.classifiedItemsPercentage.toPercentageText()
 	technical += "OTHER por valor" to metrics.otherPercentageByValue.toPercentageText()
-	technical += "OTHER por quantidade" to metrics.otherPercentageByItems.toPercentageText()
 	technical += "Inferência (ms)" to behaviorResult.inferenceDurationMs.toString()
 	technical += "Input sanitizado" to if (behaviorResult.usedSanitizedInput) "Sim (${behaviorResult.sanitizationNotes.size} ajustes)" else "Não"
 	behaviorResult.fallbackReason?.let { technical += "Motivo do fallback" to it.name }
+	technical += "Métricas internas" to "$MODEL_INTERNAL_METRICS_COUNT calculadas"
+	technical += "Notas analisadas" to metrics.totalReceipts.toString()
+	technical += "Itens analisados" to metrics.totalItems.toString()
 	if (metrics.classifiedItemsPercentage < 0.70) {
 		technical += "Aviso técnico" to "Há muitos itens não classificados. Isso pode reduzir a confiabilidade da análise."
 	}
 
-	modelInput.features.toSortedMap().forEach { (name, value) ->
+	selectedInput.features.forEach { (name, value) ->
 		technical += "Feature $name" to value.toNumberText()
 	}
 
 	behaviorResult.profileScores
 		.toList()
 		.sortedByDescending { (_, score) -> score }
+		.take(3)
 		.forEach { (profile, score) ->
 			technical += "Probabilidade ${profile.toDisplayName()}" to score.toPercentageText()
 		}
 
-	metrics.categoryMetrics
-		.toList()
-		.sortedBy { (category, _) -> category.name }
-		.forEach { (category, categoryMetrics) ->
-			val details = "valor=${categoryMetrics.totalValue.toCurrencyText()}, itens=${categoryMetrics.totalItems}, frequência=${categoryMetrics.frequency.toPercentageText()}"
-			technical += "Métrica ${category.toDisplayName()}" to details
-		}
-
 	return HomeAnalysisPresentation(
 		profileTitle = summary.toPresentationTitle(behaviorResult.mainProfile),
-		profileDescription = profileExplanation ?: summary?.humanReadableDescription ?: behaviorResult.mainProfile.toDescription(),
+		profileDescription = behaviorResult.mainProfile.toDescription(),
+		consumptionReading = buildBehavioralReading(this),
 		confidenceLabel = behaviorResult.confidence.toConfidenceLabel(),
 		sourceLabel = behaviorResult.source.toDisplayLabel(),
-		sourceWarning = behaviorResult.source.toWarningMessage(behaviorResult.fallbackReason?.name),
-		mainCharacteristics = characteristics,
-		consumptionSummaryItems = listOf(
-			"Total gasto" to metrics.totalValue.toCurrencyText(),
-			"Ticket médio" to metrics.averageTicket.toCurrencyText(),
-			"Itens analisados" to metrics.totalItems.toString(),
-			"Itens classificados" to metrics.classifiedItemsPercentage.toPercentageText(),
-			"Percentual essencial" to metrics.essentialCategoriesPercentage.toPercentageText(),
-			"Percentual não essencial" to metrics.nonEssentialCategoriesPercentage.toPercentageText(),
-			"Diversidade" to metrics.categoryDiversityIndex.toPercentageText(),
-			"Categoria dominante por valor" to metrics.maxCategoryByValue.toDisplayName()
-		),
+		sourceWarning = behaviorResult.source.toWarningMessage(behaviorResult.fallbackReason),
+		primarySignals = buildPrimarySignals(this),
 		technicalItems = technical
 	)
+}
+
+private fun buildPrimarySignals(analysis: StoredConsumptionAnalysis): List<String> {
+	val metrics = analysis.metrics
+	val mainProfile = analysis.behaviorResult.mainProfile
+	val alcoholicProfileScore = analysis.behaviorResult.profileScores[
+		ConsumptionBehaviorProfile.ALCOHOLIC_BEVERAGE_RECURRENT
+	].orZero()
+
+	return buildList {
+		when (mainProfile) {
+			ConsumptionBehaviorProfile.ALCOHOLIC_BEVERAGE_RECURRENT -> {
+				add("Bebidas alcoólicas presentes em ${metrics.alcoholicBeverageFrequency.toPercentageText()} das notas")
+				add("Bebidas alcoólicas + snacks em ${metrics.alcoholSnackCoOccurrenceFrequency.toPercentageText()} das notas")
+				add("Bebidas + snacks em ${metrics.beverageSnackCoOccurrenceFrequency.toPercentageText()} das notas")
+			}
+			ConsumptionBehaviorProfile.NON_ALCOHOLIC_BEVERAGE_RECURRENT -> {
+				add("Bebidas presentes em ${metrics.frequencyByCategory[ProductCategory.BEVERAGES].orZero().toPercentageText()} das notas")
+				add("Bebidas + snacks em ${metrics.beverageSnackCoOccurrenceFrequency.toPercentageText()} das notas")
+				if (metrics.softDrinkFrequency >= 0.20) {
+					add("Refrigerantes presentes em ${metrics.softDrinkFrequency.toPercentageText()} das notas")
+				}
+			}
+			else -> {
+				if (metrics.alcoholicBeverageFrequency >= 0.30) {
+					add("Bebidas alcoólicas presentes em ${metrics.alcoholicBeverageFrequency.toPercentageText()} das notas")
+				}
+				add("Bebidas presentes em ${metrics.frequencyByCategory[ProductCategory.BEVERAGES].orZero().toPercentageText()} das notas")
+				add("Bebidas + snacks em ${metrics.beverageSnackCoOccurrenceFrequency.toPercentageText()} das notas")
+				if (metrics.softDrinkFrequency >= 0.20) {
+					add("Refrigerantes presentes em ${metrics.softDrinkFrequency.toPercentageText()} das notas")
+				}
+			}
+		}
+		add("Alimentação básica representa ${metrics.valuePercentageByCategory[ProductCategory.BASIC_FOOD].orZero().toPercentageText()} do valor")
+		add("Recorrência de itens em ${metrics.recurringItemRatio.toPercentageText()} das compras")
+	}.take(5)
+}
+
+private fun buildBehavioralReading(analysis: StoredConsumptionAnalysis): String {
+	val metrics = analysis.metrics
+	val mainProfile = analysis.behaviorResult.mainProfile
+	val alcoholicProfileScore = analysis.behaviorResult.profileScores[
+		ConsumptionBehaviorProfile.ALCOHOLIC_BEVERAGE_RECURRENT
+	].orZero()
+
+	val beverageFrequency = metrics.frequencyByCategory[ProductCategory.BEVERAGES].orZero().toPercentageText()
+	val essentialValue = metrics.valuePercentageByCategory[ProductCategory.BASIC_FOOD].orZero().toPercentageText()
+	val beverageSnackFrequency = metrics.beverageSnackCoOccurrenceFrequency.toPercentageText()
+	val alcoholSnackFrequency = metrics.alcoholSnackCoOccurrenceFrequency.toPercentageText()
+	val alcoholFrequency = metrics.alcoholicBeverageFrequency.toPercentageText()
+	val softDrinkFrequency = metrics.softDrinkFrequency.toPercentageText()
+
+	return buildString {
+		when (mainProfile) {
+			ConsumptionBehaviorProfile.ALCOHOLIC_BEVERAGE_RECURRENT -> {
+				append("As compras analisadas mostram presença recorrente de bebidas alcoólicas")
+				append(" ($alcoholFrequency das notas)")
+				append(", com combinação frequente com snacks em $alcoholSnackFrequency")
+				append(" e contexto ampliado de bebidas + snacks em $beverageSnackFrequency.")
+				append("\n\n")
+				append("Apesar disso, alimentação básica continua presente em valor ($essentialValue), ")
+				append("indicando que o consumo alcoólico coexiste com compras de rotina.")
+			}
+			ConsumptionBehaviorProfile.NON_ALCOHOLIC_BEVERAGE_RECURRENT -> {
+				val alcoholicPatternIsCompetitive = alcoholicProfileScore >= 0.25
+				append("As compras analisadas mostram recorrência de bebidas em geral")
+				if (metrics.softDrinkFrequency >= 0.20) {
+					if (alcoholicPatternIsCompetitive) {
+						append(", com presença relevante de refrigerantes")
+					} else {
+						append(", com destaque para refrigerantes e outras bebidas não alcoólicas")
+					}
+				}
+				append(" ($beverageFrequency das notas)")
+				append(" e combinação com snacks em $beverageSnackFrequency.")
+				if (metrics.softDrinkFrequency >= 0.20) {
+					append(" Refrigerantes aparecem em $softDrinkFrequency das notas.")
+				}
+				if (alcoholicPatternIsCompetitive) {
+					append("\n\n")
+					append("Também há sinais secundários de bebidas alcoólicas recorrentes ($alcoholFrequency), ")
+					append("mas eles não superam o padrão principal identificado.")
+				}
+				append("\n\n")
+				append("Alimentação básica continua relevante em valor ($essentialValue), ")
+				append("o que sugere uma rotina de consumo complementar e não restrita a ocasiões pontuais.")
+			}
+			else -> {
+				append("As compras analisadas mostram um padrão variado, com presença frequente de bebidas")
+				append(" ($beverageFrequency das notas)")
+				append(" e combinação com snacks em $beverageSnackFrequency.")
+				append("\n\n")
+				append("Apesar disso, alimentação básica continua relevante em valor ($essentialValue), ")
+				append("indicando que o consumo não está concentrado apenas em conveniência. ")
+				append("A diversidade entre categorias sugere uma rotina relativamente equilibrada, com presença complementar de itens domésticos e higiene.")
+			}
+		}
+	}
 }
 
 private fun com.example.consumoai.domain.model.ConsumptionProfileSummary?.toPresentationTitle(
@@ -112,7 +178,8 @@ fun ConsumptionBehaviorProfile.toDisplayName(): String {
 		ConsumptionBehaviorProfile.CONVENIENCE_ORIENTED -> "Orientado à conveniência"
 		ConsumptionBehaviorProfile.ESSENTIAL_FOCUSED -> "Focado no essencial"
 		ConsumptionBehaviorProfile.DIVERSIFIED_BALANCED -> "Diversificado e equilibrado"
-		ConsumptionBehaviorProfile.BEVERAGE_RECURRENT -> "Recorrente em bebidas"
+		ConsumptionBehaviorProfile.NON_ALCOHOLIC_BEVERAGE_RECURRENT -> "Recorrência de bebidas não alcoólicas"
+		ConsumptionBehaviorProfile.ALCOHOLIC_BEVERAGE_RECURRENT -> "Recorrência de bebidas alcoólicas"
 		ConsumptionBehaviorProfile.LOW_FRESH_FOOD -> "Baixa presença de hortifruti"
 		ConsumptionBehaviorProfile.HOUSEHOLD_MAINTENANCE -> "Foco em manutenção doméstica"
 		ConsumptionBehaviorProfile.HIGHLY_CONCENTRATED -> "Consumo concentrado"
@@ -126,19 +193,13 @@ fun ConsumptionBehaviorProfile.toDescription(): String {
 		ConsumptionBehaviorProfile.CONVENIENCE_ORIENTED -> "Maior presença de produtos industrializados e compras voltadas à praticidade."
 		ConsumptionBehaviorProfile.ESSENTIAL_FOCUSED -> "Predominância de itens essenciais e alimentação básica nas compras analisadas."
 		ConsumptionBehaviorProfile.DIVERSIFIED_BALANCED -> "Distribuição relativamente equilibrada entre diferentes categorias de consumo."
-		ConsumptionBehaviorProfile.BEVERAGE_RECURRENT -> "Bebidas aparecem com recorrência relevante nas notas analisadas."
+		ConsumptionBehaviorProfile.NON_ALCOHOLIC_BEVERAGE_RECURRENT -> "Bebidas não alcoólicas aparecem com recorrência relevante nas notas analisadas."
+		ConsumptionBehaviorProfile.ALCOHOLIC_BEVERAGE_RECURRENT -> "Bebidas alcoólicas aparecem com recorrência relevante nas notas analisadas."
 		ConsumptionBehaviorProfile.LOW_FRESH_FOOD -> "Baixa participação de hortifruti e alimentos frescos no consumo analisado."
 		ConsumptionBehaviorProfile.HOUSEHOLD_MAINTENANCE -> "Maior presença de produtos de higiene e limpeza doméstica."
 		ConsumptionBehaviorProfile.HIGHLY_CONCENTRATED -> "Grande parte do consumo está concentrada em poucas categorias."
 		ConsumptionBehaviorProfile.IMPULSIVE_CONSUMPTION -> "Maior presença de categorias não essenciais e compras de conveniência."
 		ConsumptionBehaviorProfile.UNDEFINED -> "Não foi possível identificar um padrão confiável com os dados atuais."
-	}
-}
-
-private fun ConsumptionBehaviorProfile.toMainCharacteristicName(): String {
-	return when (this) {
-		ConsumptionBehaviorProfile.DIVERSIFIED_BALANCED -> "Consumo diversificado"
-		else -> toDisplayName()
 	}
 }
 
@@ -156,16 +217,21 @@ private fun BehaviorClassificationSource.toTechnicalLabel(): String {
 	}
 }
 
-private fun BehaviorClassificationSource.toWarningMessage(fallbackReason: String?): String? {
+private fun BehaviorClassificationSource.toWarningMessage(fallbackReason: FallbackReason?): String? {
 	return when (this) {
 		BehaviorClassificationSource.TRAINED_MODEL -> null
 		BehaviorClassificationSource.RULE_BASED_FALLBACK -> buildString {
-			append("Backend indisponível. Resultado gerado por fallback local")
-			fallbackReason?.let { append(" ($it)") }
-			append('.')
+			if (fallbackReason == FallbackReason.BACKEND_REJECTED_INPUT) {
+				append("Não foi possível usar o modelo treinado. Resultado gerado localmente.")
+			} else {
+				append("Backend indisponível. Resultado gerado por fallback local")
+				fallbackReason?.let { append(" (${it.name})") }
+				append('.')
+			}
 		}
 	}
 }
+
 
 private fun Double.toConfidenceLabel(): String {
 	return when {
@@ -176,30 +242,11 @@ private fun Double.toConfidenceLabel(): String {
 	}
 }
 
-private fun InsightSeverity.toOrder(): Int {
-	return when (this) {
-		InsightSeverity.HIGH -> 3
-		InsightSeverity.MEDIUM -> 2
-		InsightSeverity.LOW -> 1
-	}
-}
-
-private fun ProductCategory?.toDisplayName(): String {
-	return when (this) {
-		ProductCategory.BASIC_FOOD -> "Alimentação básica"
-		ProductCategory.INDUSTRIALIZED -> "Industrializados"
-		ProductCategory.BEVERAGES -> "Bebidas"
-		ProductCategory.HYGIENE -> "Higiene"
-		ProductCategory.CLEANING -> "Limpeza"
-		ProductCategory.PRODUCE -> "Hortifruti"
-		ProductCategory.OTHER -> "Outros"
-		null -> "Indefinido"
-	}
-}
-
-private fun Double.toCurrencyText(): String = "R$ ${"%.2f".format(Locale.US, this).replace('.', ',')}"
 
 private fun Double.toPercentageText(): String = "${"%.1f".format(Locale.US, this * 100)}%"
 
 private fun Double.toNumberText(): String = "%.4f".format(Locale.US, this)
+
+private fun Double?.orZero(): Double = this ?: 0.0
+
 

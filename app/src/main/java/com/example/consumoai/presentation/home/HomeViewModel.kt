@@ -7,10 +7,12 @@ import com.example.consumoai.domain.usecase.ClearReceiptsUseCase
 import com.example.consumoai.domain.usecase.GetStoredReceiptsSummaryUseCase
 import com.example.consumoai.domain.usecase.ImportSampleNfceReceiptsUseCase
 import com.example.consumoai.presentation.home.model.toHomeAnalysisPresentation
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class HomeViewModel(
     private val importSampleNfceReceiptsUseCase: ImportSampleNfceReceiptsUseCase,
@@ -35,8 +37,13 @@ class HomeViewModel(
             _uiState.value = _uiState.value.copy(isImporting = true, errorMessage = null)
 
             runCatching {
-                val result = importSampleNfceReceiptsUseCase()
-                val summary = getStoredReceiptsSummaryUseCase()
+                // Run IO operations on Dispatchers.IO
+                val result = withContext(Dispatchers.IO) {
+                    importSampleNfceReceiptsUseCase()
+                }
+                val summary = withContext(Dispatchers.IO) {
+                    getStoredReceiptsSummaryUseCase()
+                }
                 result to summary
             }.onSuccess { (result, summary) ->
                 _uiState.value = _uiState.value.copy(
@@ -60,11 +67,14 @@ class HomeViewModel(
             _uiState.value = _uiState.value.copy(isAnalyzing = true, errorMessage = null)
 
             runCatching {
-                val analysis = analyzeStoredReceiptsUseCase()
-                val summary = getStoredReceiptsSummaryUseCase()
-                analysis to summary
-            }.onSuccess { (analysis, summary) ->
-
+                // Run heavy computation on Dispatchers.Default
+                withContext(Dispatchers.Default) {
+                    analyzeStoredReceiptsUseCase()
+                }
+            }.onSuccess { analysis ->
+                val summary = withContext(Dispatchers.IO) {
+                    getStoredReceiptsSummaryUseCase()
+                }
                 _uiState.value = _uiState.value.copy(
                     isAnalyzing = false,
                     localSummary = summary,
@@ -80,6 +90,7 @@ class HomeViewModel(
         }
     }
 
+
     private fun clearReceipts() {
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(
@@ -89,7 +100,9 @@ class HomeViewModel(
             )
 
             runCatching {
-                clearReceiptsUseCase()
+                withContext(Dispatchers.IO) {
+                    clearReceiptsUseCase()
+                }
             }.onSuccess {
                 _uiState.value = HomeUiState()
             }.onFailure { error ->
@@ -101,4 +114,6 @@ class HomeViewModel(
             }
         }
     }
+
 }
+

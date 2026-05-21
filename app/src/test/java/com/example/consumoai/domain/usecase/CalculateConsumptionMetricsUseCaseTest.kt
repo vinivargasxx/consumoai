@@ -1,5 +1,6 @@
 package com.example.consumoai.domain.usecase
 
+import com.example.consumoai.data.classifier.KeywordProductSemanticTagger
 import com.example.consumoai.domain.model.ProductCategory
 import com.example.consumoai.domain.model.ProductItem
 import com.example.consumoai.domain.model.Receipt
@@ -7,6 +8,7 @@ import com.example.consumoai.domain.model.ReceiptSource
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertFalse
 import org.junit.Test
 
 class CalculateConsumptionMetricsUseCaseTest {
@@ -96,6 +98,126 @@ class CalculateConsumptionMetricsUseCaseTest {
         assertEquals(0.0, metrics.averageItemsPerReceipt, 0.0001)
         assertNull(metrics.maxCategoryByValue)
         assertNull(metrics.maxCategoryByItems)
+    }
+
+    @Test
+    fun invoke_correctlyIdentifiesAlcoholicBeveragesAndSeparatesFromNonAlcoholic() {
+        val tagger = KeywordProductSemanticTagger()
+
+        val receipts = listOf(
+            Receipt(
+                id = 1,
+                source = ReceiptSource.QR_CODE,
+                items = listOf(
+                    ProductItem(name = "CERVEJA", price = 25.0, category = ProductCategory.BEVERAGES),
+                    ProductItem(name = "SALGADINHO", price = 10.0, category = ProductCategory.INDUSTRIALIZED)
+                )
+            ),
+            Receipt(
+                id = 2,
+                source = ReceiptSource.QR_CODE,
+                items = listOf(
+                    ProductItem(name = "REFRIGERANTE", price = 8.0, category = ProductCategory.BEVERAGES),
+                    ProductItem(name = "AGUA", price = 5.0, category = ProductCategory.BEVERAGES),
+                    ProductItem(name = "ARROZ", price = 20.0, category = ProductCategory.BASIC_FOOD)
+                )
+            ),
+            Receipt(
+                id = 3,
+                source = ReceiptSource.QR_CODE,
+                items = listOf(
+                    ProductItem(name = "VINHO", price = 40.0, category = ProductCategory.BEVERAGES),
+                    ProductItem(name = "AMENDOIM", price = 8.0, category = ProductCategory.INDUSTRIALIZED)
+                )
+            )
+        )
+
+        val metrics = CalculateConsumptionMetricsUseCase(semanticTagger = tagger)(receipts)
+
+        // Validar métricas alcoólicas
+        assertEquals(2.0 / 3.0, metrics.alcoholicBeverageFrequency, 0.0001) // 2 de 3 notas têm cerveja/vinho
+        assertTrue(metrics.alcoholicBeverageValuePct > 0.0)
+
+        // Validar métricas não-alcoólicas
+        assertEquals(1.0 / 3.0, metrics.nonAlcoholicBeverageFrequency, 0.0001) // 1 de 3 notas têm água/suco/refri (nota 2)
+        assertTrue(metrics.nonAlcoholicBeverageValuePct > 0.0)
+
+        // Separação clara
+        assertTrue(metrics.alcoholicBeverageFrequency > 0.0)
+        assertTrue(metrics.nonAlcoholicBeverageFrequency > 0.0)
+        assertFalse(metrics.alcoholicBeverageFrequency == metrics.nonAlcoholicBeverageFrequency)
+    }
+
+    @Test
+    fun invoke_correctlyComputesSoftDrinkAndEnergyDrinkFrequencies() {
+        val tagger = KeywordProductSemanticTagger()
+
+        val receipts = listOf(
+            Receipt(
+                id = 1,
+                source = ReceiptSource.QR_CODE,
+                items = listOf(
+                    ProductItem(name = "COCA COLA", price = 8.0, category = ProductCategory.BEVERAGES),
+                    ProductItem(name = "ARROZ", price = 20.0, category = ProductCategory.BASIC_FOOD)
+                )
+            ),
+            Receipt(
+                id = 2,
+                source = ReceiptSource.QR_CODE,
+                items = listOf(
+                    ProductItem(name = "RED BULL", price = 15.0, category = ProductCategory.BEVERAGES),
+                    ProductItem(name = "BISCOITO", price = 5.0, category = ProductCategory.INDUSTRIALIZED)
+                )
+            )
+        )
+
+        val metrics = CalculateConsumptionMetricsUseCase(semanticTagger = tagger)(receipts)
+
+        // Soft drink
+        assertEquals(0.5, metrics.softDrinkFrequency, 0.0001) // 1 de 2 notas
+        assertTrue(metrics.softDrinkValuePct > 0.0)
+
+        // Energy drink
+        assertEquals(0.5, metrics.energyDrinkFrequency, 0.0001) // 1 de 2 notas
+        assertTrue(metrics.energyDrinkValuePct > 0.0)
+    }
+
+    @Test
+    fun invoke_correctlyComputesBeverageAndSnackCoOccurrenceFrequencies() {
+        val tagger = KeywordProductSemanticTagger()
+
+        val receipts = listOf(
+            Receipt(
+                id = 1,
+                source = ReceiptSource.QR_CODE,
+                items = listOf(
+                    ProductItem(name = "CERVEJA", price = 25.0, category = ProductCategory.BEVERAGES),
+                    ProductItem(name = "DORITOS", price = 10.0, category = ProductCategory.INDUSTRIALIZED)
+                )
+            ),
+            Receipt(
+                id = 2,
+                source = ReceiptSource.QR_CODE,
+                items = listOf(
+                    ProductItem(name = "COCA", price = 8.0, category = ProductCategory.BEVERAGES),
+                    ProductItem(name = "BISCOITO", price = 5.0, category = ProductCategory.INDUSTRIALIZED)
+                )
+            ),
+            Receipt(
+                id = 3,
+                source = ReceiptSource.QR_CODE,
+                items = listOf(
+                    ProductItem(name = "AGUA", price = 5.0, category = ProductCategory.BEVERAGES)
+                )
+            )
+        )
+
+        val metrics = CalculateConsumptionMetricsUseCase(semanticTagger = tagger)(receipts)
+
+        // Ambas as co-ocorrências
+        assertTrue(metrics.beverageSnackCoOccurrenceFrequency > 0.0)
+        assertTrue(metrics.alcoholSnackCoOccurrenceFrequency > 0.0)
+        assertTrue(metrics.nonAlcoholicBeverageSnackCoOccurrenceFrequency > 0.0)
     }
 }
 

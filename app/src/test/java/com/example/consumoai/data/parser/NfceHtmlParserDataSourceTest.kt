@@ -2,7 +2,9 @@ package com.example.consumoai.data.parser
 
 import org.jsoup.Jsoup
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Test
+import java.time.LocalDate
 
 class NfceHtmlParserDataSourceTest {
 
@@ -22,7 +24,8 @@ class NfceHtmlParserDataSourceTest {
             </html>
         """.trimIndent()
 
-        val products = parser.parse(Jsoup.parse(html))
+        val parsed = parser.parse(Jsoup.parse(html))
+        val products = parsed.items
 
         assertEquals(2, products.size)
         assertEquals(1, products[0].itemNumber)
@@ -31,6 +34,25 @@ class NfceHtmlParserDataSourceTest {
         assertEquals(2, products[1].itemNumber)
         assertEquals("COCA-COLA ORIG 2L", products[1].name)
         assertEquals(10.93, products[1].price, 0.0001)
+    }
+
+    @Test
+    fun parse_extractsIssueDateWhenEmissionIsPresent() {
+        val html = """
+            <html>
+              <body>
+                Data de Emissao: 14/05/2026 18:45:11
+                <table>
+                  <tr><td>1 ARROZ 8,90</td></tr>
+                </table>
+              </body>
+            </html>
+        """.trimIndent()
+
+        val parsed = parser.parse(Jsoup.parse(html))
+
+        assertNotNull(parsed.issueDate)
+        assertEquals(LocalDate.of(2026, 5, 14), parsed.issueDate)
     }
 }
 

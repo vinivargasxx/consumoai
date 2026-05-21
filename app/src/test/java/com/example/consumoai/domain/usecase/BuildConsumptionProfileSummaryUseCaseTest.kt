@@ -16,10 +16,10 @@ class BuildConsumptionProfileSummaryUseCaseTest {
     fun invoke_marksPureProfileWhenConfidenceIsHigh() {
         val summary = useCase(
             ConsumptionBehaviorResult(
-                mainProfile = ConsumptionBehaviorProfile.BEVERAGE_RECURRENT,
+                mainProfile = ConsumptionBehaviorProfile.NON_ALCOHOLIC_BEVERAGE_RECURRENT,
                 confidence = 0.62,
                 profileScores = mapOf(
-                    ConsumptionBehaviorProfile.BEVERAGE_RECURRENT to 0.62,
+                    ConsumptionBehaviorProfile.NON_ALCOHOLIC_BEVERAGE_RECURRENT to 0.62,
                     ConsumptionBehaviorProfile.DIVERSIFIED_BALANCED to 0.20
                 ),
                 source = BehaviorClassificationSource.TRAINED_MODEL
@@ -27,17 +27,17 @@ class BuildConsumptionProfileSummaryUseCaseTest {
         )
 
         assertEquals(ProfileInterpretationType.PURE_PROFILE, summary.interpretationType)
-        assertEquals(ConsumptionBehaviorProfile.BEVERAGE_RECURRENT, summary.primaryProfile)
+        assertEquals(ConsumptionBehaviorProfile.NON_ALCOHOLIC_BEVERAGE_RECURRENT, summary.primaryProfile)
     }
 
     @Test
     fun invoke_marksHybridProfileWhenConfidenceIsLowButSignalsAreMixed() {
         val summary = useCase(
             ConsumptionBehaviorResult(
-                mainProfile = ConsumptionBehaviorProfile.BEVERAGE_RECURRENT,
+                mainProfile = ConsumptionBehaviorProfile.NON_ALCOHOLIC_BEVERAGE_RECURRENT,
                 confidence = 0.40,
                 profileScores = mapOf(
-                    ConsumptionBehaviorProfile.BEVERAGE_RECURRENT to 0.40,
+                    ConsumptionBehaviorProfile.NON_ALCOHOLIC_BEVERAGE_RECURRENT to 0.40,
                     ConsumptionBehaviorProfile.DIVERSIFIED_BALANCED to 0.28,
                     ConsumptionBehaviorProfile.HOUSEHOLD_MAINTENANCE to 0.20
                 ),

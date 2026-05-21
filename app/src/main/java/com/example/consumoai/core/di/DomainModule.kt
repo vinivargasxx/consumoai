@@ -4,7 +4,6 @@ import com.example.consumoai.domain.insights.ConsumptionInsightsEngine
 import com.example.consumoai.domain.insights.DefaultConsumptionInsightsEngine
 import com.example.consumoai.domain.usecase.AnalyzeReceiptFromQrCodeUrlUseCase
 import com.example.consumoai.domain.usecase.AnalyzeStoredReceiptsUseCase
-import com.example.consumoai.domain.usecase.BuildAnonymizedConsumptionExportUseCase
 import com.example.consumoai.domain.usecase.BuildConsumptionModelInputUseCase
 import com.example.consumoai.domain.usecase.BuildConsumptionProfileSummaryUseCase
 import com.example.consumoai.domain.usecase.CalculateConsumptionMetricsUseCase
@@ -14,7 +13,6 @@ import com.example.consumoai.domain.usecase.ClassifyProductsUseCase
 import com.example.consumoai.domain.usecase.ConsumptionFeatureSanitizer
 import com.example.consumoai.domain.usecase.GetStoredReceiptsSummaryUseCase
 import com.example.consumoai.domain.usecase.ImportSampleNfceReceiptsUseCase
-import com.example.consumoai.domain.usecase.ProfileExplanationBuilder
 import com.example.consumoai.domain.usecase.SaveReceiptUseCase
 import org.koin.dsl.module
 
@@ -33,7 +31,11 @@ val domainModule = module {
         )
     }
 
-    factory { CalculateConsumptionMetricsUseCase() }
+    factory {
+        CalculateConsumptionMetricsUseCase(
+            semanticTagger = get()
+        )
+    }
 
     factory { BuildConsumptionModelInputUseCase() }
 
@@ -41,9 +43,6 @@ val domainModule = module {
 
     factory { BuildConsumptionProfileSummaryUseCase() }
 
-    factory { ProfileExplanationBuilder() }
-
-    factory { BuildAnonymizedConsumptionExportUseCase() }
 
     factory {
         ClassifyConsumptionProfileUseCase(
@@ -78,9 +77,7 @@ val domainModule = module {
             classifyConsumptionProfileUseCase = get(),
             insightsEngine = get(),
             consumptionFeatureSanitizer = get(),
-            buildConsumptionProfileSummaryUseCase = get(),
-            profileExplanationBuilder = get(),
-            buildAnonymizedConsumptionExportUseCase = get()
+            buildConsumptionProfileSummaryUseCase = get()
         )
     }
 
@@ -95,4 +92,5 @@ val domainModule = module {
             receiptRepository = get()
         )
     }
+
 }

@@ -1,16 +1,23 @@
-﻿package com.example.consumoai.presentation.home
+package com.example.consumoai.presentation.home
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
@@ -18,16 +25,15 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.example.consumoai.domain.model.ImportReceiptsResult
 import com.example.consumoai.domain.model.StoredReceiptsSummary
@@ -42,7 +48,24 @@ fun HomeScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(text = "ConsumoAI") }
+                title = {
+                    Column(modifier = Modifier.padding(vertical = 4.dp)) {
+                        Text(
+                            text = "ConsumoAI",
+                            style = MaterialTheme.typography.titleLarge,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = "Modelo XGBoost Top 15",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    titleContentColor = MaterialTheme.colorScheme.onPrimary
+                )
             )
         }
     ) { paddingValues ->
@@ -52,44 +75,83 @@ fun HomeScreen(
                 .padding(paddingValues)
                 .verticalScroll(rememberScrollState())
                 .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            Text("Ações principais", style = MaterialTheme.typography.titleMedium)
+            // Ações principais
+            SectionTitle("Ações principais")
             ActionButtons(
                 isImporting = uiState.isImporting,
                 isAnalyzing = uiState.isAnalyzing,
                 onAction = onAction
             )
 
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Card de resumo local
             StoredReceiptsCard(
                 summary = uiState.localSummary,
                 importResult = uiState.importResult
             )
 
+            // Análise principal (se disponível)
             uiState.analysisPresentation?.let { presentation ->
-                ProfileCard(presentation)
-                MainCharacteristicsCard(presentation.mainCharacteristics)
-                ConsumptionSummaryCard(presentation.consumptionSummaryItems)
+                Spacer(modifier = Modifier.height(8.dp))
+                SectionTitle("Análise")
+
+                // Card principal: Perfil identificado
+                ProfileResultCard(presentation)
+
+                // Card: Leitura do consumo
+                ConsumptionReadingCard(presentation.consumptionReading)
+
+                // Card: Principais sinais
+                PrimarySignalsCard(presentation.primarySignals)
+
+                // Card recolhível: Detalhes técnicos
                 TechnicalDetailsCard(presentation.technicalItems)
             }
 
+            // Estados: loading ou erro
             when {
                 uiState.isImporting || uiState.isAnalyzing -> {
                     CircularProgressIndicator(
-                        modifier = Modifier.align(Alignment.CenterHorizontally)
+                        modifier = Modifier
+                            .align(Alignment.CenterHorizontally)
+                            .padding(32.dp)
                     )
                 }
 
                 uiState.errorMessage != null -> {
-                    Text(
-                        text = uiState.errorMessage,
-                        color = MaterialTheme.colorScheme.error,
-                        style = MaterialTheme.typography.bodyMedium
-                    )
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 8.dp),
+                        shape = RoundedCornerShape(16.dp),
+                        color = MaterialTheme.colorScheme.errorContainer
+                    ) {
+                        Text(
+                            text = uiState.errorMessage,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.padding(16.dp)
+                        )
+                    }
                 }
             }
+
+            Spacer(modifier = Modifier.height(16.dp))
         }
     }
+}
+
+@Composable
+private fun SectionTitle(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.titleMedium,
+        color = MaterialTheme.colorScheme.onSurface,
+        modifier = Modifier.padding(vertical = 8.dp)
+    )
 }
 
 @Composable
@@ -98,28 +160,51 @@ private fun ActionButtons(
     isAnalyzing: Boolean,
     onAction: (HomeScreenAction) -> Unit
 ) {
-    Button(
-        onClick = { onAction(HomeScreenAction.OnImportSampleNfceUrlsClick) },
-        enabled = !isImporting,
-        modifier = Modifier.fillMaxWidth()
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        Text(text = if (isImporting) "Importando..." else "Importar notas NFC-e de teste")
-    }
+        Button(
+            onClick = { onAction(HomeScreenAction.OnImportSampleNfceUrlsClick) },
+            enabled = !isImporting && !isAnalyzing,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(48.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = MaterialTheme.colorScheme.primary
+            ),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            Text(text = if (isImporting) "Importando..." else "Importar notas NFC-e")
+        }
 
-    Button(
-        onClick = { onAction(HomeScreenAction.OnAnalyzeStoredReceiptsClick) },
-        enabled = !isAnalyzing,
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Text(text = if (isAnalyzing) "Analisando..." else "Analisar notas armazenadas")
-    }
+        Button(
+            onClick = { onAction(HomeScreenAction.OnAnalyzeStoredReceiptsClick) },
+            enabled = !isAnalyzing && !isImporting,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(48.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = MaterialTheme.colorScheme.secondary
+            ),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            Text(text = if (isAnalyzing) "Analisando..." else "Analisar consumo")
+        }
 
-    Button(
-        onClick = { onAction(HomeScreenAction.OnClearReceiptsClick) },
-        enabled = !isImporting && !isAnalyzing,
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Text(text = "Limpar notas locais")
+        Button(
+            onClick = { onAction(HomeScreenAction.OnClearReceiptsClick) },
+            enabled = !isImporting && !isAnalyzing,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(48.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = MaterialTheme.colorScheme.tertiary
+            ),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            Text(text = "Limpar dados locais")
+        }
     }
 }
 
@@ -130,20 +215,32 @@ private fun StoredReceiptsCard(
 ) {
     if (summary == null) return
 
-    Card(modifier = Modifier.fillMaxWidth()) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        )
+    ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            Text("Notas armazenadas", style = MaterialTheme.typography.titleLarge)
-            Spacer(modifier = Modifier.height(16.dp))
+            Text("Dados locais armazenados", style = MaterialTheme.typography.titleMedium)
+            Spacer(modifier = Modifier.height(12.dp))
 
-            Text("Notas: ${summary.totalReceipts}", style = MaterialTheme.typography.bodyLarge)
-            Text("Itens: ${summary.totalItems}", style = MaterialTheme.typography.bodyLarge)
-            Text("Valor total: ${summary.totalValue.toCurrencyText()}", style = MaterialTheme.typography.bodyLarge)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly
+            ) {
+                MetricBadge("Notas", summary.totalReceipts.toString())
+                MetricBadge("Itens", summary.totalItems.toString())
+                MetricBadge("Valor total", summary.totalValue.toCurrencyText())
+            }
 
             if (importResult != null) {
                 Spacer(modifier = Modifier.height(12.dp))
                 Text(
-                    text = "Última importação: ${importResult.importedCount} novas, ${importResult.skippedCount} duplicadas, ${importResult.failedCount} falhas",
-                    style = MaterialTheme.typography.bodySmall,
+                    text = "Última importação: ${importResult.importedCount} novas, ${importResult.skippedCount} duplicadas",
+                    style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
@@ -152,71 +249,92 @@ private fun StoredReceiptsCard(
 }
 
 @Composable
-private fun ProfileCard(presentation: HomeAnalysisPresentation) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text("Perfil identificado", style = MaterialTheme.typography.titleLarge)
-            Spacer(modifier = Modifier.height(12.dp))
-
-            ProfileBadge(presentation.profileTitle)
-            Spacer(modifier = Modifier.height(12.dp))
-            Text(presentation.profileDescription, style = MaterialTheme.typography.bodyMedium)
-
-            Spacer(modifier = Modifier.height(12.dp))
-            Text(presentation.confidenceLabel, style = MaterialTheme.typography.titleSmall)
-            Text("Origem: ${presentation.sourceLabel}", style = MaterialTheme.typography.bodySmall)
-
-            Spacer(modifier = Modifier.height(8.dp))
+private fun MetricBadge(label: String, value: String) {
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.primaryContainer,
+        modifier = Modifier.padding(4.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
             Text(
-                text = presentation.sourceWarning ?: "Resultado gerado pelo modelo treinado",
-                style = MaterialTheme.typography.bodySmall,
-                color = if (presentation.sourceWarning == null) {
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                } else {
-                    MaterialTheme.colorScheme.error
-                }
+                value,
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onPrimaryContainer
+            )
+            Text(
+                label,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onPrimaryContainer
             )
         }
     }
 }
 
 @Composable
-private fun ProfileBadge(profileTitle: String) {
-    Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 4.dp),
+private fun ProfileResultCard(presentation: HomeAnalysisPresentation) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
-        color = Color(0xFFFFB74D).copy(alpha = 0.45f),
-        tonalElevation = 6.dp
-    ) {
-        Text(
-            text = profileTitle.uppercase(),
-            style = MaterialTheme.typography.headlineSmall,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 14.dp),
-            textAlign = TextAlign.Center,
-            color = Color(0xFF4D2600)
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer
         )
-    }
-}
-
-@Composable
-private fun MainCharacteristicsCard(mainCharacteristics: List<String>) {
-    if (mainCharacteristics.isEmpty()) return
-
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text("Principais características", style = MaterialTheme.typography.titleLarge)
+    ) {
+        Column(modifier = Modifier.padding(20.dp)) {
+            Text(
+                "Perfil identificado",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+            )
             Spacer(modifier = Modifier.height(8.dp))
 
-            mainCharacteristics.forEach { line ->
-                if (line == "Observações:") {
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Text(line, style = MaterialTheme.typography.titleSmall)
-                } else {
-                    Text("- $line", style = MaterialTheme.typography.bodyMedium)
+            Text(
+                presentation.profileTitle.uppercase(),
+                style = MaterialTheme.typography.headlineSmall,
+                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                textAlign = TextAlign.Start
+            )
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Text(
+                presentation.profileDescription,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onPrimaryContainer
+            )
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(
+                        "Confiança",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                    )
+                    Text(
+                        presentation.confidenceLabel,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                }
+                Column {
+                    Text(
+                        "Origem",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                    )
+                    Text(
+                        presentation.sourceLabel,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
                 }
             }
         }
@@ -224,15 +342,76 @@ private fun MainCharacteristicsCard(mainCharacteristics: List<String>) {
 }
 
 @Composable
-private fun ConsumptionSummaryCard(items: List<Pair<String, String>>) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text("Resumo de consumo", style = MaterialTheme.typography.titleLarge)
-            Spacer(modifier = Modifier.height(8.dp))
+private fun ConsumptionReadingCard(reading: String) {
+    if (reading.isBlank()) return
 
-            items.forEach { (label, value) ->
-                Text("$label: $value", style = MaterialTheme.typography.bodyLarge)
-                Spacer(modifier = Modifier.height(4.dp))
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface
+        )
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                "Leitura do consumo",
+                style = MaterialTheme.typography.titleMedium
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            Text(
+                reading,
+                style = MaterialTheme.typography.bodyMedium,
+                lineHeight = MaterialTheme.typography.bodyMedium.lineHeight.times(1.5f),
+                color = MaterialTheme.colorScheme.onSurface
+            )
+        }
+    }
+}
+
+@Composable
+private fun PrimarySignalsCard(signals: List<String>) {
+    if (signals.isEmpty()) return
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.secondaryContainer
+        )
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                "Principais sinais",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSecondaryContainer
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+
+            signals.forEach { signal ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 6.dp),
+                    verticalAlignment = Alignment.Top
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .padding(top = 6.dp, end = 12.dp)
+                            .size(8.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.72f),
+                            modifier = Modifier.size(8.dp)
+                        ) {}
+                    }
+                    Text(
+                        signal,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer
+                    )
+                }
             }
         }
     }
@@ -242,38 +421,61 @@ private fun ConsumptionSummaryCard(items: List<Pair<String, String>>) {
 private fun TechnicalDetailsCard(items: List<Pair<String, String>>) {
     var expanded by rememberSaveable { mutableStateOf(false) }
 
-    Card(modifier = Modifier.fillMaxWidth()) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        )
+    ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            Text("Ver detalhes técnicos", style = MaterialTheme.typography.titleMedium)
-            Spacer(modifier = Modifier.height(8.dp))
-
-            Button(
-                onClick = { expanded = !expanded },
-                modifier = Modifier.fillMaxWidth()
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(if (expanded) "Ocultar detalhes" else "Abrir detalhes")
+                Text(
+                    "Detalhes técnicos",
+                    style = MaterialTheme.typography.titleMedium
+                )
+                Button(
+                    onClick = { expanded = !expanded },
+                    modifier = Modifier.height(32.dp),
+                    shape = RoundedCornerShape(8.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.2f)
+                    )
+                ) {
+                    Text(
+                        if (expanded) "−" else "+",
+                        style = MaterialTheme.typography.titleSmall
+                    )
+                }
             }
 
             if (expanded) {
                 Spacer(modifier = Modifier.height(12.dp))
                 items.forEach { (label, value) ->
-                    val isTechnicalWarning = label == "Aviso técnico"
-                    Text(
-                        text = "$label: $value",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = if (isTechnicalWarning) {
-                            MaterialTheme.colorScheme.error
-                        } else {
-                            MaterialTheme.colorScheme.onSurface
-                        }
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            label,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            value,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.padding(bottom = 8.dp)
+                        )
+                    }
                 }
             }
         }
     }
 }
 
-private fun Double.toCurrencyText(): String {
-    return "R$ ${"%.2f".format(java.util.Locale.US, this).replace('.', ',')}"
-}
+private fun Double.toCurrencyText(): String = "R$ ${"%.2f".format(java.util.Locale.US, this).replace('.', ',')}"
+
+

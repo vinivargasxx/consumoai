@@ -1,6 +1,5 @@
 package com.example.consumoai.domain.model
 
-const val MODEL_INPUT_VERSION = "v1"
 
 /**
  * Official feature payload consumed by the behavior classifier and, in the future,

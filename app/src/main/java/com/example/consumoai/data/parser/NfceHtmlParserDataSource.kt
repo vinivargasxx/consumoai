@@ -1,7 +1,12 @@
 package com.example.consumoai.data.parser
 
 import com.example.consumoai.domain.model.ProductItem
+import com.example.consumoai.domain.model.ParsedNfceReceipt
 import org.jsoup.nodes.Document
+import java.time.LocalDate
+import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
+import java.time.format.DateTimeParseException
 import java.util.Locale
 
 class NfceHtmlParserDataSource {
@@ -12,17 +17,65 @@ class NfceHtmlParserDataSource {
         "QTD TOTAL", "VALOR TOTAL", "VALOR PAGO", "FORMA DE PAGAMENTO", "CONSUMIDOR", "CHAVE", "PROTOCOLO"
     )
 
-    fun parse(document: Document): List<ProductItem> {
+    fun parse(document: Document): ParsedNfceReceipt {
         val products = parseTabResultTable(document)
             .ifEmpty { parseByRows(document) }
             .ifEmpty {
-            parseFallbackFromText(document.body()?.text().orEmpty())
+            parseFallbackFromText(document.body().text())
             }
             .distinctBy { "${it.itemNumber}|${it.name}|${formatPrice(it.price)}" }
             .sortedBy { it.itemNumber ?: Int.MAX_VALUE }
 
+        return ParsedNfceReceipt(
+            items = products,
+            issueDate = extractIssueDate(document)
+        )
+    }
 
-        return products
+    private fun extractIssueDate(document: Document): LocalDate? {
+        val bodyText = normalizeSpaces(document.body().text())
+
+        val emissionPatterns = listOf(
+            Regex("(?:EMISSAO|DATA DE EMISSAO|DATA EMISSAO)\\s*[:\\-]?\\s*(\\d{2}/\\d{2}/\\d{4})(?:\\s+(\\d{2}:\\d{2}:\\d{2}))?"),
+            Regex("\\b(\\d{2}/\\d{2}/\\d{4})\\s+(\\d{2}:\\d{2}:\\d{2})\\b"),
+            Regex("\\b(\\d{2}/\\d{2}/\\d{4})\\b")
+        )
+
+        val candidate = emissionPatterns.firstNotNullOfOrNull { regex ->
+            regex.find(bodyText)?.groupValues?.drop(1)?.firstOrNull { it.isNotBlank() }
+        }
+
+        return parseDate(candidate)
+    }
+
+    private fun parseDate(value: String?): LocalDate? {
+        if (value.isNullOrBlank()) return null
+
+        val trimmed = value.trim()
+        val dateFormats = listOf(
+            DateTimeFormatter.ofPattern("dd/MM/yyyy"),
+            DateTimeFormatter.ofPattern("d/M/yyyy")
+        )
+
+        dateFormats.forEach { formatter ->
+            try {
+                return LocalDate.parse(trimmed, formatter)
+            } catch (_: DateTimeParseException) {
+            }
+        }
+
+        val dateTimeFormats = listOf(
+            DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm:ss"),
+            DateTimeFormatter.ofPattern("d/M/yyyy H:mm:ss")
+        )
+        dateTimeFormats.forEach { formatter ->
+            try {
+                return LocalDateTime.parse(trimmed, formatter).toLocalDate()
+            } catch (_: DateTimeParseException) {
+            }
+        }
+
+        return null
     }
 
     private fun parseTabResultTable(document: Document): List<ProductItem> {

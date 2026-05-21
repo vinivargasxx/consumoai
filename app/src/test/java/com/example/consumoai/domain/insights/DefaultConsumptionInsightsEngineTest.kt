@@ -7,6 +7,7 @@ import com.example.consumoai.domain.model.ProductCategory
 import com.example.consumoai.domain.model.ProductItem
 import com.example.consumoai.domain.model.Receipt
 import com.example.consumoai.domain.model.ReceiptSource
+import com.example.consumoai.data.classifier.KeywordProductSemanticTagger
 import com.example.consumoai.domain.usecase.CalculateConsumptionMetricsUseCase
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -41,12 +42,14 @@ class DefaultConsumptionInsightsEngineTest {
             )
         )
 
-        val metrics = CalculateConsumptionMetricsUseCase()(receipts)
+        val metrics = CalculateConsumptionMetricsUseCase(
+            semanticTagger = KeywordProductSemanticTagger()
+        )(receipts)
         val result = ConsumptionBehaviorResult(
-            mainProfile = ConsumptionBehaviorProfile.BEVERAGE_RECURRENT,
+            mainProfile = ConsumptionBehaviorProfile.NON_ALCOHOLIC_BEVERAGE_RECURRENT,
             confidence = 0.45,
             profileScores = mapOf(
-                ConsumptionBehaviorProfile.BEVERAGE_RECURRENT to 0.46,
+                ConsumptionBehaviorProfile.NON_ALCOHOLIC_BEVERAGE_RECURRENT to 0.46,
                 ConsumptionBehaviorProfile.DIVERSIFIED_BALANCED to 0.29,
                 ConsumptionBehaviorProfile.LOW_FRESH_FOOD to 0.13
             ),
@@ -98,12 +101,14 @@ class DefaultConsumptionInsightsEngineTest {
             )
         )
 
-        val metrics = CalculateConsumptionMetricsUseCase()(receipts)
+        val metrics = CalculateConsumptionMetricsUseCase(
+            semanticTagger = KeywordProductSemanticTagger()
+        )(receipts)
         val result = ConsumptionBehaviorResult(
-            mainProfile = ConsumptionBehaviorProfile.BEVERAGE_RECURRENT,
+            mainProfile = ConsumptionBehaviorProfile.NON_ALCOHOLIC_BEVERAGE_RECURRENT,
             confidence = 0.41,
             profileScores = mapOf(
-                ConsumptionBehaviorProfile.BEVERAGE_RECURRENT to 0.41,
+                ConsumptionBehaviorProfile.NON_ALCOHOLIC_BEVERAGE_RECURRENT to 0.41,
                 ConsumptionBehaviorProfile.DIVERSIFIED_BALANCED to 0.27,
                 ConsumptionBehaviorProfile.ESSENTIAL_FOCUSED to 0.22
             ),

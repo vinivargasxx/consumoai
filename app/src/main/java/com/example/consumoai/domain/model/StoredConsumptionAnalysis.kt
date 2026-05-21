@@ -5,8 +5,6 @@ data class StoredConsumptionAnalysis(
     val metrics: ConsumptionMetrics,
     val modelInput: ConsumptionModelInput,
     val behaviorResult: ConsumptionBehaviorResult,
-    val behaviorAnalysis: ConsumptionBehaviorAnalysis? = null,
-    val profileExplanation: String? = null,
-    val anonymizedExport: AnonymizedConsumptionExport? = null
+    val behaviorAnalysis: ConsumptionBehaviorAnalysis
 )
 

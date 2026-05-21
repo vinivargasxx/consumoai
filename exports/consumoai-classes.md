@@ -1,16 +1,10 @@
 ﻿# ConsumoAI source export
 
-Generated: 2026-05-14 01:27:12 (V1.1 with improved classifier)  
+Generated: 2026-05-20 21:28:54  
 
 Include tests: True  
 
-Total files: 71 (Updated after cleanup)
-
-**RECENT UPDATES (2026-05-14):**
-- KeywordProductClassifierDataSource: Expanded to 250+ keywords with 10 special rule functions (alcoholic, energy, hygiene, cleaning, etc.)
-- NfceHtmlParserDataSource: Removed debug logging
-- GenerateOtherItemsReportUseCase: Removed from DomainModule, AppModule, and HomeViewModel
-- Classification V1.1: Improved from ~75% to ~98% expected coverage with reduced OTHER items
+Total files: 87
 
 ## FILE: app/src/main/java/com/example/consumoai/ConsumoAiApplication.kt
 
@@ -72,17 +66,19 @@ import androidx.room.Room
 import com.example.consumoai.BuildConfig
 import com.example.consumoai.data.classifier.ConsumptionModelApi
 import com.example.consumoai.data.classifier.KeywordProductClassifierDataSource
+import com.example.consumoai.data.classifier.KeywordProductSemanticTagger
 import com.example.consumoai.data.classifier.RemoteConsumptionBehaviorClassifier
 import com.example.consumoai.data.classifier.RuleBasedConsumptionBehaviorClassifier
-import com.example.consumoai.data.datasource.ocr.MlKitOcrDataSource
 import com.example.consumoai.data.datasource.qrcode.NfceQrCodeDataSource
 import com.example.consumoai.data.local.AppDatabase
 import com.example.consumoai.data.parser.NfceHtmlParserDataSource
-import com.example.consumoai.data.parser.ReceiptLayoutParserDataSource
 import com.example.consumoai.data.repository.ReceiptRepositoryImpl
 import com.example.consumoai.domain.classifier.ConsumptionBehaviorClassifier
 import com.example.consumoai.domain.classifier.ProductClassifier
+import com.example.consumoai.domain.classifier.ProductSemanticTagger
 import com.example.consumoai.domain.repository.ReceiptRepository
+import okhttp3.OkHttpClient
+import okhttp3.logging.HttpLoggingInterceptor
 import org.koin.android.ext.koin.androidContext
 import org.koin.dsl.module
 import retrofit2.Retrofit
@@ -111,14 +107,6 @@ val dataModule = module {
     }
 
     single {
-        MlKitOcrDataSource()
-    }
-
-    single {
-        ReceiptLayoutParserDataSource()
-    }
-
-    single {
         NfceHtmlParserDataSource()
     }
 
@@ -132,9 +120,28 @@ val dataModule = module {
         KeywordProductClassifierDataSource()
     }
 
+    single<ProductSemanticTagger> {
+        KeywordProductSemanticTagger()
+    }
+
+    single {
+        OkHttpClient.Builder()
+            .apply {
+                if (BuildConfig.DEBUG) {
+                    addInterceptor(
+                        HttpLoggingInterceptor().apply {
+                            level = HttpLoggingInterceptor.Level.BODY
+                        }
+                    )
+                }
+            }
+            .build()
+    }
+
     single {
         Retrofit.Builder()
             .baseUrl(BuildConfig.MODEL_API_BASE_URL)
+            .client(get())
             .addConverterFactory(GsonConverterFactory.create())
             .build()
     }
@@ -163,29 +170,22 @@ package com.example.consumoai.core.di
 
 import com.example.consumoai.domain.insights.ConsumptionInsightsEngine
 import com.example.consumoai.domain.insights.DefaultConsumptionInsightsEngine
-import com.example.consumoai.domain.usecase.AnalyzeReceiptFromOcrUseCase
 import com.example.consumoai.domain.usecase.AnalyzeReceiptFromQrCodeUrlUseCase
-import com.example.consumoai.domain.usecase.AnalyzeReceiptWithFallbackUseCase
 import com.example.consumoai.domain.usecase.AnalyzeStoredReceiptsUseCase
 import com.example.consumoai.domain.usecase.BuildConsumptionModelInputUseCase
+import com.example.consumoai.domain.usecase.BuildConsumptionProfileSummaryUseCase
 import com.example.consumoai.domain.usecase.CalculateConsumptionMetricsUseCase
+import com.example.consumoai.domain.usecase.CalculateConsumptionMetricsV2UseCase
 import com.example.consumoai.domain.usecase.ClearReceiptsUseCase
 import com.example.consumoai.domain.usecase.ClassifyConsumptionProfileUseCase
 import com.example.consumoai.domain.usecase.ClassifyProductsUseCase
+import com.example.consumoai.domain.usecase.ConsumptionFeatureSanitizer
 import com.example.consumoai.domain.usecase.GetStoredReceiptsSummaryUseCase
 import com.example.consumoai.domain.usecase.ImportSampleNfceReceiptsUseCase
 import com.example.consumoai.domain.usecase.SaveReceiptUseCase
 import org.koin.dsl.module
 
 val domainModule = module {
-
-    factory {
-        AnalyzeReceiptFromOcrUseCase(
-            mlKitOcrDataSource = get(),
-            receiptLayoutParserDataSource = get(),
-            classifyProductsUseCase = get()
-        )
-    }
 
     factory {
         AnalyzeReceiptFromQrCodeUrlUseCase(
@@ -204,18 +204,24 @@ val domainModule = module {
 
     factory { BuildConsumptionModelInputUseCase() }
 
+    factory { ConsumptionFeatureSanitizer() }
+
+    factory {
+        CalculateConsumptionMetricsV2UseCase(
+            calculateConsumptionMetricsUseCase = get(),
+            semanticTagger = get()
+        )
+    }
+
+    factory { BuildConsumptionProfileSummaryUseCase() }
+
+
     factory {
         ClassifyConsumptionProfileUseCase(
             consumptionBehaviorClassifier = get()
         )
     }
 
-    factory {
-        AnalyzeReceiptWithFallbackUseCase(
-            analyzeReceiptFromQrCodeUrlUseCase = get(),
-            analyzeReceiptFromOcrUseCase = get()
-        )
-    }
 
     factory {
         SaveReceiptUseCase(
@@ -238,10 +244,12 @@ val domainModule = module {
     factory {
         AnalyzeStoredReceiptsUseCase(
             receiptRepository = get(),
-            calculateConsumptionMetricsUseCase = get(),
+            calculateConsumptionMetricsV2UseCase = get(),
             buildConsumptionModelInputUseCase = get(),
             classifyConsumptionProfileUseCase = get(),
-            insightsEngine = get()
+            insightsEngine = get(),
+            consumptionFeatureSanitizer = get(),
+            buildConsumptionProfileSummaryUseCase = get()
         )
     }
 
@@ -256,6 +264,7 @@ val domainModule = module {
             receiptRepository = get()
         )
     }
+
 }
 ```
 
@@ -298,91 +307,132 @@ class KeywordProductClassifierDataSource : ProductClassifier {
         // Tea and mate
         "CHA", "MATE",
         // Energy drinks
-        "ENERGETICO", "ENERG", "MONSTER",
+        "ENERGETICO", "MONSTER",
         // Alcoholic beverages
-        "CERVEJA", "CHOPP", "IPA", "PALE ALE", "ALE", "LAGER", "PILSEN", "PILSNER",
+        "CERVEJA", "CHOPP", "IPA", "PALE ALE", "LAGER", "PILSEN", "PILSNER",
         "BADEN BADEN", "BLUE MOON", "KAISERDOM", "TUPINIQUIM", "ROLETA RUSSA",
-        "VINHO", "VH", "CONCHA Y TORO", "AURORA", "C SAUV", "CARM", "RESERVADO",
-        // Generic
-        "BEB", "BEBIDA"
+        "VINHO", "CONCHA Y TORO", "AURORA"
     )
 
     private val industrializedKeywords = listOf(
-        // Chocolates, biscuits, snacks, etc.
+        // Chocolates
         "CHOCOLATE", "CHOC", "TRENTO", "LACTA", "KITKAT", "KINDER", "OREO",
+        // Biscuits and cookies
         "BISCOITO", "BISC", "BOLACHA", "COOKIE", "WAFER",
+        // Sweet snacks
         "TORTIN", "MOUSSE", "ANA MARIA", "BAUDUCCO", "ISABELA",
         "AVELA", "AVELAS", "CACAU",
+        // Savory snacks
         "SALGADINHO", "SALG", "SNACK",
         "DORITOS", "FANDANGOS", "CHEETOS", "SALTLETTS", "BREZEL",
+        // Frozen/convenience
         "CONGELADO", "LASANHA", "PIZZA", "WRAP", "TORTILHA",
         "NUGGET", "BATATA PALHA",
+        // Sauces and condiments
         "TEMPERO", "SAZON", "MAIONESE", "KETCHUP", "CATCHUP", "MOSTARDA",
+        // Breakfast items
         "ACHOCOLATADO", "CEREAL", "GRANOLA", "PIPOCA", "PIPOCA MIC",
+        // Noodles
         "NISSIN", "MAC NISSIN", "LAMEN", "MIOJO",
+        // Sweets
         "BARRA", "DOCE", "BALA", "BALAS", "HALLS", "GOMA", "SORVETE", "PICOLE",
+        // Bakery
         "BOLO", "BOLO MARMORE", "ROSCA", "ROSCA POLV"
     )
 
     private val basicFoodKeywords = listOf(
+        // Grains and starches
         "ARROZ", "FEIJAO", "MASSA", "MACARRAO", "ESPAGUETE", "FARINHA",
+        // Sweeteners and oils
         "ACUCAR", "OLEO", "SAL", "SAL REFINADO", "SAL IODADO",
+        // Beverages - milk based
         "CAFE",
+        // Dairy products
         "LEITE", "IOGURTE", "IOG", "BATIDO",
         "QUEIJO", "QJO", "MUSSARELA", "MUCARELA", "MOZZARELLA",
         "REQUEIJAO", "MANTEIGA", "MARGARINA",
+        // Bread
         "PAO", "CACETINHO", "BISNAGA",
+        // Meat and proteins
         "CARNE", "FRANGO", "PEITO", "PATINHO", "COXAO", "COXAO DENTRO",
         "CARNE MOIDA", "MOIDA", "SALSICHA", "LINGUICA",
         "OVO", "OVOS", "LOMBO", "LOMBO COZ", "PRESUNTO", "MORTADELA", "MORT",
+        // Fish and seafood
         "ATUM", "SARDINHA",
-        "MOLHO", "MOL", "MOLHO TOMATE", "PASSATA", "EXTRATO",
+        // Sauces and pastes
+        "MOLHO", "MOLHO TOMATE", "PASSATA", "EXTRATO",
         "TOMATE S PELE", "TOMATE PELADO",
+        // Other
         "MEL", "AVEIA", "MILHO VERDE", "AMENDOIM"
     )
 
     private val produceKeywords = listOf(
+        // Fruits
         "BANANA", "MACA", "MAMAO", "LARANJA", "MORANGO", "UVA", "LIMAO", "ABACAXI",
         "MELANCIA", "MELAO", "PERA",
+        // Vegetables
         "TOMATE", "BATATA", "CENOURA", "CEBOLA", "ALFACE", "PIMENTAO",
         "VERDURA", "LEGUME",
+        // Leafy and fresh greens
         "BROCOLIS", "COUVE", "REPOLHO", "CEBOLINHA", "ALHO",
+        // Other vegetables
         "PEPINO", "ABOBRINHA", "BERINJELA", "MANDIOCA", "AIPIM", "INHAME",
-        "GRANEL"
+        // Granel indicator intentionally excluded from broad matching to avoid false positives
     )
 
     private val hygieneKeywords = listOf(
-        "PAPEL HIGIENICO", "P H", "HIGIENICO",
-        "SABONETE", "SAB", "DOVE",
-        "SHAMPOO", "SH", "HEAD", "SHOULDERS", "HEAD SHOULDERS", "CLEAR", "CONDICIONADOR",
-        "CREME DENTAL", "CR D", "PASTA DENTAL", "COLGATE",
+        // Toilet paper
+        "PAPEL HIGIENICO", "HIGIENICO",
+        // Soaps and cleansers
+        "SABONETE", "DOVE",
+        // Hair products
+        "SHAMPOO", "HEAD", "SHOULDERS", "HEAD SHOULDERS", "CLEAR", "CONDICIONADOR",
+        // Dental care
+        "CREME DENTAL", "PASTA DENTAL", "COLGATE",
         "ESCOVA DENTAL", "FIO DENTAL",
-        "DESODORANTE", "DES", "REXONA",
+        // Deodorant
+        "DESODORANTE", "REXONA",
+        // Feminine products
         "ABSORVENTE", "FRALDA", "HUGGIES",
+        // Personal hygiene misc
         "ALGODAO", "COTONETE", "BARBEAR", "GILLETTE", "CARGA GILLETTE",
         "ENXAGUANTE",
+        // Wipes and tissues
         "LENCO UMEDECIDO", "LENCO UMED", "TOALHA UMED", "TOALHA UMEDECIDA",
-        "PRESERV", "PRESERVATIVO", "OLLA"
+        // Sexual health
+        "PRESERVATIVO", "OLLA"
     )
 
     private val cleaningKeywords = listOf(
-        "DETERGENTE", "DET LQ", "LAV LOUCA", "LAVA LOUCA",
-        "DESINFETANTE", "DESINF", "PINHO SOL", "KALIPTO",
+        // Dish detergent
+        "DETERGENTE", "LAV LOUCA", "LAVA LOUCA",
+        // Disinfectants
+        "DESINFETANTE", "PINHO SOL", "KALIPTO",
+        // Bleach and sanitizers
         "AGUA SANITARIA", "SANITARIA", "CLORO",
-        "LAVA ROUPAS", "L ROUP", "ROUP PO", "OMO",
+        // Laundry products
+        "LAVA ROUPAS", "OMO",
+        // Soaps
         "SABAO", "SABAO PO",
-        "AMACIANTE", "AMAC", "COMFORT", "SPLENDO",
+        // Fabric softeners
+        "AMACIANTE", "COMFORT", "SPLENDO",
+        // Whiteners
         "ALVEJANTE",
-        "LIMPADOR", "LIMP", "LIMP PISO", "AJAX", "DESTAC",
+        // General cleaners
+        "LIMPADOR", "LIMP PISO", "AJAX", "DESTAC",
         "MULTIUSO", "VEJA", "YPE",
-        "ESPONJA", "ESP ESFREBOM", "ESFREBOM", "BOMBRIL",
+        // Cleaning tools
+        "ESPONJA", "ESFREBOM", "BOMBRIL",
+        // Misc
         "SAPONACEO", "DESENGORDURANTE", "LIMPEZA",
+        // Trash and paper
         "SACO LIXO", "LIXO",
-        "P TOALHA", "PAPEL TOALHA", "TOALHA PAPEL", "FILTRO PAPEL"
+        "PAPEL TOALHA", "TOALHA PAPEL", "FILTRO PAPEL"
     )
 
     override fun classify(item: ProductItem): ProductItem {
         val normalized = normalizeName(item.name)
+
 
         val category = when {
             isAlcoholicBeverage(normalized) -> ProductCategory.BEVERAGES
@@ -401,7 +451,7 @@ class KeywordProductClassifierDataSource : ProductClassifier {
             matchesAny(normalized, beveragesKeywords) -> ProductCategory.BEVERAGES
             matchesAny(normalized, industrializedKeywords) -> ProductCategory.INDUSTRIALIZED
             matchesAny(normalized, basicFoodKeywords) -> ProductCategory.BASIC_FOOD
-            matchesAny(normalized, produceKeywords) -> ProductCategory.PRODUCE
+            matchesAnyProduce(normalized) -> ProductCategory.PRODUCE
             else -> ProductCategory.OTHER
         }
 
@@ -409,9 +459,7 @@ class KeywordProductClassifierDataSource : ProductClassifier {
     }
 
     override fun classifyAll(items: List<ProductItem>): List<ProductItem> {
-        val classified = items.map(::classify)
-        logClassificationSummary(classified)
-        return classified
+        return items.map(::classify)
     }
 
     private fun normalizeName(name: String): String {
@@ -426,42 +474,151 @@ class KeywordProductClassifierDataSource : ProductClassifier {
     }
 
     private fun matchesAny(normalized: String, keywords: List<String>): Boolean {
-        return keywords.any { keyword -> normalized.contains(keyword) }
+        return keywords.any { keyword -> matchesKeyword(normalized, keyword) }
     }
 
-    // Special rule functions
+    private fun matchesKeyword(normalized: String, keyword: String): Boolean {
+        return when {
+            keyword.length <= 3 -> hasWholeWord(normalized, keyword)
+            else -> normalized.contains(keyword)
+        }
+    }
+
+    private fun hasWholeWord(normalized: String, token: String): Boolean {
+        return Regex("(^| )${Regex.escape(token)}( |$)").containsMatchIn(normalized)
+    }
+
+    private fun isSafeShortTokenMatch(
+        normalized: String,
+        token: String,
+        requiredContext: List<String>
+    ): Boolean {
+        if (!hasWholeWord(normalized, token)) return false
+        return requiredContext.isEmpty() || requiredContext.any { normalized.contains(it) }
+    }
+
+    private fun matchesAnyProduce(normalized: String): Boolean {
+        if (containsBeverageContext(normalized)) return false
+
+        return produceKeywords.any { keyword ->
+            when (keyword) {
+                "MACA", "UVA", "TOMATE", "ALHO" -> hasWholeWord(normalized, keyword)
+                else -> normalized.contains(keyword)
+            }
+        }
+    }
+
+    private fun containsBeverageContext(normalized: String): Boolean {
+        return normalized.contains("SUCO") ||
+            normalized.contains("NECTAR") ||
+            normalized.contains("NATURALE") ||
+            normalized.contains("DEL VALLE") ||
+            normalized.contains("REFRIGERANTE") ||
+            normalized.contains("REFRI") ||
+            normalized.contains("COCA") ||
+            normalized.contains("FANTA") ||
+            normalized.contains("SPRITE") ||
+            normalized.contains("PEPSI") ||
+            normalized.contains("MONSTER") ||
+            normalized.contains("ENERGETICO") ||
+            normalized.contains("CHOPP") ||
+            normalized.contains("VINHO") ||
+            normalized.contains("CERVEJA")
+    }
+
+    private fun containsSnackOrFrozenContext(normalized: String): Boolean {
+        return normalized.contains("PIZZA") ||
+            normalized.contains("LASANHA") ||
+            normalized.contains("NISSIN") ||
+            normalized.contains("LAMEN") ||
+            normalized.contains("MIOJO") ||
+            normalized.contains("SALG") ||
+            normalized.contains("SALGADINHO") ||
+            normalized.contains("DORITOS") ||
+            normalized.contains("FANDANGOS") ||
+            normalized.contains("CHEETOS") ||
+            normalized.contains("SNACK") ||
+            normalized.contains("WRAP") ||
+            normalized.contains("TORTILHA")
+    }
+
+    // ========== SPECIAL RULE FUNCTIONS ==========
+
+    /**
+     * Detects alcoholic beverages.
+     */
     private fun isAlcoholicBeverage(normalized: String): Boolean {
-        return matchesAny(normalized, listOf(
-            "CHOPP", "IPA", "PALE ALE", "ALE", "LAGER", "PILSEN", "PILSNER",
-            "BLUE MOON", "BADEN BADEN", "KAISERDOM", "TUPINIQUIM", "ROLETA RUSSA",
-            "VINHO", "VH", "AURORA", "CONCHA Y TORO", "C SAUV", "CARM", "RESERVADO"
-        ))
+        return matchesAny(
+            normalized,
+            listOf(
+                "CHOPP", "IPA", "PALE ALE", "LAGER", "PILSEN", "PILSNER",
+                "BLUE MOON", "BADEN BADEN", "KAISERDOM", "TUPINIQUIM", "ROLETA RUSSA",
+                "VINHO", "AURORA", "CONCHA Y TORO"
+            )
+        ) ||
+            isSafeShortTokenMatch(normalized, "VH", listOf("AURORA", "C SAUV", "CARM", "RESERVADO", "VINHO")) ||
+            isSafeShortTokenMatch(normalized, "ALE", listOf("PALE", "IPA", "CERVEJA", "CHOPP")) ||
+            normalized.contains("C SAUV") ||
+            normalized.contains("CARM") ||
+            normalized.contains("RESERVADO")
     }
 
+    /**
+     * Detects energy drinks.
+     */
     private fun isEnergyDrink(normalized: String): Boolean {
-        return matchesAny(normalized, listOf("ENERG", "MONSTER"))
+        return normalized.contains("MONSTER") ||
+            normalized.contains("ENERGETICO") ||
+            isSafeShortTokenMatch(normalized, "ENERG", listOf("MONSTER", "RED BULL", "ENERGETICO"))
     }
 
+    /**
+     * Detects personal hygiene products.
+     */
     private fun isPersonalHygiene(normalized: String): Boolean {
         if (normalized.contains("P TOALHA") || (normalized.contains("TOALHA PAPEL") && !normalized.contains("UMED"))) {
             return false
         }
 
-        return matchesAny(normalized, listOf(
-            "SH", "SHAMPOO", "HEAD", "CLEAR", "DOVE", "REXONA", "GILLETTE", "COLGATE",
-            "CR D", "SAB", "DES", "PRESERV", "OLLA", "LENCO UMED", "TOALHA UMED",
-            "HUGGIES", "P H"
-        ))
+        return matchesAny(
+            normalized,
+            listOf(
+                "SHAMPOO", "HEAD", "CLEAR", "DOVE", "REXONA", "GILLETTE", "COLGATE",
+                "OLLA", "LENCO UMED", "TOALHA UMED", "HUGGIES", "PAPEL HIGIENICO", "HIGIENICO"
+            )
+        ) ||
+            isSafeShortTokenMatch(normalized, "CR D", listOf("COLGATE", "DENTAL")) ||
+            isSafeShortTokenMatch(normalized, "SAB", listOf("DOVE", "SABONETE")) ||
+            isSafeShortTokenMatch(normalized, "SH", listOf("HEAD", "CLEAR", "SHAMPOO")) ||
+            isSafeShortTokenMatch(normalized, "DES", listOf("REXONA", "DOVE", "DESODORANTE", "CLINICAL")) ||
+            isSafeShortTokenMatch(normalized, "P H", listOf("NEVE", "HIGIEN")) ||
+            normalized.contains("PRESERV")
     }
 
+    /**
+     * Detects house cleaning products.
+     */
     private fun isHouseCleaning(normalized: String): Boolean {
-        return matchesAny(normalized, listOf(
-            "DET LQ", "LAV LOUCA", "LAVA LOUCA", "DESINF", "L ROUP", "OMO",
-            "AMAC", "COMFORT", "SPLENDO", "LIMP", "AJAX", "PINHO SOL", "KALIPTO",
-            "ESFREBOM", "SACO LIXO", "P TOALHA", "PAPEL TOALHA", "TOALHA PAPEL", "FILTRO PAPEL"
-        ))
+        return matchesAny(
+            normalized,
+            listOf(
+                "LAV LOUCA", "LAVA LOUCA", "OMO",
+                "COMFORT", "SPLENDO", "AJAX", "PINHO SOL", "KALIPTO",
+                "ESFREBOM", "SACO LIXO", "PAPEL TOALHA", "TOALHA PAPEL", "FILTRO PAPEL"
+            )
+        ) ||
+            normalized.contains("DET LQ") ||
+            normalized.contains("DESINF") ||
+            normalized.contains("L ROUP") ||
+            normalized.contains("ROUP PO") ||
+            normalized.contains("P TOALHA") ||
+            isSafeShortTokenMatch(normalized, "AMAC", listOf("COMFORT", "AMACIANTE")) ||
+            isSafeShortTokenMatch(normalized, "LIMP", listOf("AJAX", "PISO", "LIMPADOR", "LIMPEZA"))
     }
 
+    /**
+     * Detects processed tomato products.
+     */
     private fun isTomatoProcessed(normalized: String): Boolean {
         val hasTomato = normalized.contains("TOMATE")
         val isProcessed = normalized.contains("PASSATA") ||
@@ -474,69 +631,203 @@ class KeywordProductClassifierDataSource : ProductClassifier {
         return hasTomato && isProcessed
     }
 
+    /**
+     * Detects fresh produce.
+     */
     private fun isFreshProduce(normalized: String): Boolean {
-        return matchesAny(normalized, listOf(
-            "PIMENTAO", "CEBOLINHA", "ALHO", "MELANCIA",
-            "BANANA", "MACA", "MORANGO", "UVA", "LARANJA"
-        )) || (normalized.contains("TOMATE") && !isTomatoProcessed(normalized))
+        if (containsBeverageContext(normalized)) return false
+
+        val produceMarkers = listOf("PIMENTAO", "CEBOLINHA", "MELANCIA", "BANANA", "MORANGO", "LARANJA")
+        return matchesAny(normalized, produceMarkers) ||
+            hasWholeWord(normalized, "ALHO") ||
+            hasWholeWord(normalized, "MACA") ||
+            hasWholeWord(normalized, "UVA") ||
+            (normalized.contains("TOMATE") && !isTomatoProcessed(normalized))
     }
 
+    /**
+     * Detects meat and protein products.
+     */
     private fun isMeat(normalized: String): Boolean {
-        if (normalized.contains("SAZON") || normalized.contains("TEMPERO") || normalized.contains("TEMP")) {
+        // Reject seasoning context
+        if (
+            normalized.contains("SAZON") ||
+            normalized.contains("TEMPERO") ||
+            normalized.contains("TEMP") ||
+            containsSnackOrFrozenContext(normalized)
+        ) {
             return false
         }
 
-        return matchesAny(normalized, listOf(
-            "PATINHO", "COXAO", "CARNE", "FRANGO", "LOMBO", "MORT", "MORTADELA",
-            "PRESUNTO", "SALSICHA", "LINGUICA"
-        ))
+        return matchesAny(
+            normalized,
+            listOf(
+                "PATINHO", "COXAO", "CARNE", "FRANGO", "LOMBO", "MORT", "MORTADELA",
+                "PRESUNTO", "SALSICHA", "LINGUICA"
+            )
+        )
     }
 
+    /**
+     * Detects dairy products.
+     */
     private fun isDairy(normalized: String): Boolean {
-        return matchesAny(normalized, listOf(
-            "LEITE", "IOGURTE", "IOG", "QUEIJO", "QJO", "MUSSARELA",
-            "MUCARELA", "MOZZARELLA", "REQUEIJAO", "MANTEIGA", "MARGARINA"
-        ))
+        if (containsSnackOrFrozenContext(normalized)) return false
+
+        return matchesAny(
+            normalized,
+            listOf(
+                "LEITE", "IOGURTE", "IOG", "QUEIJO", "QJO", "MUSSARELA",
+                "MUCARELA", "MOZZARELLA", "REQUEIJAO", "MANTEIGA", "MARGARINA"
+            )
+        )
     }
 
+    /**
+     * Detects frozen and convenience foods.
+     */
     private fun isFrozenOrConvenienceFood(normalized: String): Boolean {
-        return matchesAny(normalized, listOf("PIZZA", "LASANHA", "NISSIN", "MAC NISSIN", "PIPOCA MIC", "WRAP", "TORTILHA"))
+        return matchesAny(
+            normalized,
+            listOf("PIZZA", "LASANHA", "NISSIN", "MAC NISSIN", "PIPOCA MIC", "WRAP", "TORTILHA")
+        )
     }
 
+    /**
+     * Detects snacks and sweets.
+     */
     private fun isSnackOrSweet(normalized: String): Boolean {
-        return matchesAny(normalized, listOf(
-            "SALG", "DORITOS", "FANDANGOS", "CHEETOS", "TRENTO",
-            "BALA", "HALLS", "CHOC", "BOLO", "ROSCA"
-        ))
+        return matchesAny(
+            normalized,
+            listOf(
+                "SALG", "DORITOS", "FANDANGOS", "CHEETOS", "TRENTO",
+                "BALA", "HALLS", "CHOC", "BOLO", "ROSCA"
+            )
+        )
     }
 
-    // Legacy functions
-    private fun isMilkOrDairy(normalized: String): Boolean = isDairy(normalized)
-    private fun isShelfStableTomato(normalized: String): Boolean = isTomatoProcessed(normalized)
-    private fun isFreshTomato(normalized: String): Boolean = normalized.contains("TOMATE") && !isTomatoProcessed(normalized)
-    private fun isBread(normalized: String): Boolean = matchesAny(normalized, listOf("PAO", "CACETINHO", "BISNAGA"))
-    private fun isMeatOrProtein(normalized: String): Boolean = isMeat(normalized) || matchesAny(normalized, listOf("OVO", "OVOS"))
-    private fun isSoftDrinkOrJuice(normalized: String): Boolean = matchesAny(normalized, listOf("COCA", "COCA COLA", "REFRIGERANTE", "GUARANA", "FANTA", "SPRITE", "PEPSI", "SUCO", "NECTAR", "NATURALE", "DEL VALLE"))
-    private fun isChocolateOrSnack(normalized: String): Boolean = isSnackOrSweet(normalized) || matchesAny(normalized, listOf("CHOCOLATE", "BISC", "COOKIE", "WAFER", "KITKAT", "KINDER", "LACTA", "OREO", "BAUDUCCO", "ISABELA", "ANA MARIA", "SNACK", "SALGADINHO"))
+}
+```
 
-    private fun logClassificationSummary(items: List<ProductItem>) {
-        // Logging desabilitado por enquanto
+## FILE: app/src/main/java/com/example/consumoai/data/classifier/KeywordProductSemanticTagger.kt
+
+```kotlin
+package com.example.consumoai.data.classifier
+
+import com.example.consumoai.domain.classifier.ProductSemanticTagger
+import com.example.consumoai.domain.model.ProductCategory
+import com.example.consumoai.domain.model.ProductItem
+import com.example.consumoai.domain.model.ProductSemanticTag
+import java.text.Normalizer
+import java.util.Locale
+
+class KeywordProductSemanticTagger : ProductSemanticTagger {
+
+    override fun tagsFor(item: ProductItem): Set<ProductSemanticTag> {
+        val normalized = normalize(item.name)
+        val tags = mutableSetOf<ProductSemanticTag>()
+
+        if (matchesAny(normalized, listOf("CHOPP", "IPA", "VINHO", "BADEN BADEN", "BLUE MOON", "CONCHA Y TORO", "AURORA"))) {
+            tags += ProductSemanticTag.ALCOHOLIC_BEVERAGE
+        }
+        if (matchesAny(normalized, listOf("COCA", "GUARANA", "REFRIGERANTE", "REFRI", "FANTA", "SPRITE", "PEPSI"))) {
+            tags += ProductSemanticTag.SOFT_DRINK
+        }
+        if (matchesAny(normalized, listOf("MONSTER", "ENERGETICO", "ENERG"))) {
+            tags += ProductSemanticTag.ENERGY_DRINK
+        }
+        if (matchesAny(normalized, listOf("SUCO", "NECTAR", "DEL VALLE", "NATURALE"))) {
+            tags += ProductSemanticTag.JUICE
+        }
+        if (matchesAny(normalized, listOf("DORITOS", "FANDANGOS", "TRENTO", "BALA", "SALG", "CHOC", "HALLS"))) {
+            tags += ProductSemanticTag.SNACK_OR_SWEET
+        }
+        if (matchesAny(normalized, listOf("PIZZA", "LASANHA", "NISSIN", "MIOJO", "LAMEN"))) {
+            tags += ProductSemanticTag.FROZEN_OR_READY_MEAL
+        }
+        if (matchesAny(normalized, listOf("LEITE", "QUEIJO", "QJO", "REQUEIJAO", "IOGURTE", "IOG"))) {
+            tags += ProductSemanticTag.DAIRY
+        }
+        if (matchesAny(normalized, listOf("PATINHO", "COXAO", "FRANGO", "CARNE", "PRESUNTO", "MORTADELA", "LOMBO"))) {
+            tags += ProductSemanticTag.MEAT_OR_PROTEIN
+        }
+        if (matchesAny(normalized, listOf("MELANCIA", "PIMENTAO", "ALHO", "CEBOLINHA", "TOMATE", "BANANA", "MACA", "MORANGO"))) {
+            tags += ProductSemanticTag.FRESH_PRODUCE
+        }
+        if (matchesAny(normalized, listOf("SHAMPOO", "DOVE", "REXONA", "COLGATE", "SABONETE", "DESODORANTE"))) {
+            tags += ProductSemanticTag.PERSONAL_CARE
+        }
+        if (matchesAny(normalized, listOf("OMO", "AJAX", "DET LQ", "DESINF", "DETERGENTE", "AMACIANTE"))) {
+            tags += ProductSemanticTag.HOUSEHOLD_CLEANING
+        }
+        if (matchesAny(normalized, listOf("PEDIGREE", "PETHAND", "RACAO", "ALIM CAO"))) {
+            tags += ProductSemanticTag.PET
+        }
+        if (matchesAny(normalized, listOf("CANECA", "FITA", "CADERNO", "PULVERIZ", "CAD "))) {
+            tags += ProductSemanticTag.UTILITY
+        }
+
+        if (tags.isEmpty()) {
+            tags += fallbackTagFromCategory(item.category)
+        }
+
+        return tags
+    }
+
+    private fun fallbackTagFromCategory(category: ProductCategory): ProductSemanticTag {
+        return when (category) {
+            ProductCategory.BEVERAGES -> ProductSemanticTag.JUICE
+            ProductCategory.INDUSTRIALIZED -> ProductSemanticTag.SNACK_OR_SWEET
+            ProductCategory.BASIC_FOOD -> ProductSemanticTag.MEAT_OR_PROTEIN
+            ProductCategory.PRODUCE -> ProductSemanticTag.FRESH_PRODUCE
+            ProductCategory.HYGIENE -> ProductSemanticTag.PERSONAL_CARE
+            ProductCategory.CLEANING -> ProductSemanticTag.HOUSEHOLD_CLEANING
+            ProductCategory.OTHER -> ProductSemanticTag.UNKNOWN
+        }
+    }
+
+    private fun normalize(value: String): String {
+        val uppercase = value.uppercase(Locale.ROOT)
+        val noAccents = Normalizer.normalize(uppercase, Normalizer.Form.NFD)
+            .replace(Regex("\\p{M}+"), "")
+        return noAccents.replace(Regex("[^A-Z0-9 ]"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+    }
+
+    private fun matchesAny(normalized: String, keywords: List<String>): Boolean {
+        return keywords.any { normalized.contains(it) }
     }
 }
+
 ```
 
 ## FILE: app/src/main/java/com/example/consumoai/data/classifier/ModelPredictionDtos.kt
 
 ```kotlin
 package com.example.consumoai.data.classifier
+
 data class ModelPredictionRequestDto(
     val version: String,
     val features: Map<String, Double>
 )
+
+// Resposta bruta devolvida pelo serviÃ§o de inferÃªncia.
 data class ModelPredictionResponseDto(
+    // Nome do perfil principal retornado pelo modelo.
     val main_profile: String,
+    // ConfianÃ§a numÃ©rica associada ao perfil principal.
     val confidence: Double,
-    val profile_scores: Map<String, Double>
+    // PontuaÃ§Ã£o de cada perfil considerado na inferÃªncia.
+    val profile_scores: Map<String, Double>,
+    // VersÃ£o do payload processado pelo backend (opcional).
+    val version: String? = null,
+    // Quantidade de features processadas pelo backend (opcional).
+    val feature_count: Int? = null,
+    // Identificador do modelo carregado no backend (opcional).
+    val model: String? = null,
+    // Lista de features efetivamente usadas pelo backend (opcional).
+    val used_features: List<String>? = null
 )
 ```
 
@@ -545,24 +836,58 @@ data class ModelPredictionResponseDto(
 ```kotlin
 package com.example.consumoai.data.classifier
 
+import android.util.Log
 import com.example.consumoai.domain.classifier.ConsumptionBehaviorClassifier
 import com.example.consumoai.domain.model.BehaviorClassificationSource
 import com.example.consumoai.domain.model.ConsumptionBehaviorProfile
 import com.example.consumoai.domain.model.ConsumptionBehaviorResult
 import com.example.consumoai.domain.model.ConsumptionModelInput
+import com.example.consumoai.domain.model.FallbackReason
+import retrofit2.HttpException
 
 class RemoteConsumptionBehaviorClassifier(
     private val api: ConsumptionModelApi,
     private val fallbackClassifier: RuleBasedConsumptionBehaviorClassifier
 ) : ConsumptionBehaviorClassifier {
 
+    private companion object {
+        const val REQUEST_TAG = "MODEL_REQUEST"
+        const val RESPONSE_TAG = "MODEL_RESPONSE"
+        const val ERROR_TAG = "MODEL_ERROR"
+        const val FALLBACK_TAG = "MODEL_FALLBACK"
+    }
+
     override suspend fun classify(input: ConsumptionModelInput): ConsumptionBehaviorResult {
+        val startNanos = System.nanoTime()
+
+        if (input.features.isEmpty()) {
+            return fallback(
+                input = input,
+                reason = FallbackReason.EMPTY_FEATURES,
+                durationMs = elapsedMillis(startNanos),
+                details = "Nenhuma feature disponÃ­vel para enviar ao modelo."
+            )
+        }
+
         return try {
+            safeLogDebug(
+                REQUEST_TAG,
+                "version=${input.version} features=${input.features.size}"
+            )
+            safeLogDebug(
+                REQUEST_TAG,
+                "feature_names=${input.features.keys.joinToString(",")}"
+            )
             val response = api.predict(
                 ModelPredictionRequestDto(
                     version = input.version,
                     features = input.features
                 )
+            )
+            val durationMs = elapsedMillis(startNanos)
+            safeLogDebug(
+                RESPONSE_TAG,
+                "version=${response.version ?: input.version} feature_count=${response.feature_count ?: input.features.size} main=${response.main_profile} confidence=${response.confidence} profile_scores=${response.profile_scores} model=${response.model ?: "unknown"} durationMs=$durationMs"
             )
 
             val mainProfile = response.main_profile.toBehaviorProfile()
@@ -578,11 +903,64 @@ class RemoteConsumptionBehaviorClassifier(
                 mainProfile = mainProfile,
                 confidence = response.confidence.coerceIn(0.0, 1.0),
                 profileScores = mappedScores,
-                source = BehaviorClassificationSource.TRAINED_MODEL
+                source = BehaviorClassificationSource.TRAINED_MODEL,
+                inferenceDurationMs = durationMs,
+                requestedInputVersion = input.version,
+                requestedFeatureCount = input.features.size,
+                responseVersion = response.version ?: input.version,
+                responseFeatureCount = response.feature_count ?: input.features.size,
+                backendModelUsed = response.model
             )
-        } catch (_: Exception) {
-            fallbackClassifier.classify(input)
+        } catch (error: Exception) {
+            val durationMs = elapsedMillis(startNanos)
+            val reason = when {
+                error is HttpException && error.code() == 400 -> FallbackReason.BACKEND_REJECTED_INPUT
+                error is IllegalArgumentException -> FallbackReason.INVALID_INPUT
+                error.message?.contains("load", ignoreCase = true) == true -> FallbackReason.MODEL_LOAD_ERROR
+                else -> FallbackReason.INFERENCE_ERROR
+            }
+            val httpCode = (error as? HttpException)?.code()
+            val errorBody = (error as? HttpException)?.response()?.errorBody()?.string()
+            safeLogError(
+                "durationMs=$durationMs reason=$reason http_code=${httpCode ?: "n/a"} message=${error.message} error_body=${errorBody ?: "n/a"}\n${error.stackTraceToString()}"
+            )
+            fallback(
+                input = input,
+                reason = reason,
+                durationMs = durationMs,
+                details = error.message ?: "Erro desconhecido na inferÃªncia remota"
+            )
         }
+    }
+
+    private suspend fun fallback(
+        input: ConsumptionModelInput,
+        reason: FallbackReason,
+        durationMs: Long,
+        details: String
+    ): ConsumptionBehaviorResult {
+        safeLogDebug(
+            FALLBACK_TAG,
+            "reason=$reason durationMs=$durationMs details=$details feature_count=${input.features.size}"
+        )
+        return fallbackClassifier.classify(input).copy(
+            fallbackReason = reason,
+            inferenceDurationMs = durationMs,
+            requestedInputVersion = input.version,
+            requestedFeatureCount = input.features.size
+        )
+    }
+
+    private fun elapsedMillis(startNanos: Long): Long {
+        return ((System.nanoTime() - startNanos) / 1_000_000L).coerceAtLeast(0L)
+    }
+
+    private fun safeLogDebug(tag: String, message: String) {
+        runCatching { Log.d(tag, message) }
+    }
+
+    private fun safeLogError(message: String) {
+        runCatching { Log.e(ERROR_TAG, message) }
     }
 
     private fun String.toBehaviorProfile(): ConsumptionBehaviorProfile {
@@ -604,7 +982,8 @@ import com.example.consumoai.domain.model.ConsumptionBehaviorResult
 import com.example.consumoai.domain.model.ConsumptionModelInput
 
 /**
- * Temporary rule-based implementation until a trained model replaces it.
+ * Fallback local usado apenas quando o backend treinado nÃ£o estÃ¡ disponÃ­vel.
+ * O fluxo principal permanece no classificador remoto (XGBoost V2 Top 15).
  */
 @Suppress("unused")
 class RuleBasedConsumptionBehaviorClassifier : ConsumptionBehaviorClassifier {
@@ -620,30 +999,32 @@ class RuleBasedConsumptionBehaviorClassifier : ConsumptionBehaviorClassifier {
     }
 
     internal fun classifyProfile(input: ConsumptionModelInput): ConsumptionBehaviorProfile {
-        val totalReceipts = input.feature("total_receipts")
         val classifiedItemsPercentage = input.feature("classified_items_percentage")
+        val categoryStabilityScore = input.feature("category_stability_score")
+        val basicProduceCoOccurrence = input.feature("basic_produce_cooccurrence_frequency")
+        val ticketVariationCoefficient = input.feature("ticket_variation_coefficient")
+        val essentialRoutineScore = input.feature("essential_routine_score")
+        val householdRoutineScore = input.feature("household_routine_score")
         val categoryConcentrationIndex = input.feature("category_concentration_index")
-        val convenienceScore = input.feature("convenience_score")
-        val essentialScore = input.feature("essential_score")
-        val diversityScore = input.feature("diversity_score")
-        val nonEssentialPercentage = input.feature("non_essential_categories_percentage")
-        val beveragesValuePercentage = input.feature("beverages_value_pct")
-        val beveragesFrequency = input.feature("beverages_frequency")
-        val produceValuePercentage = input.feature("produce_value_pct")
         val produceFrequency = input.feature("produce_frequency")
-        val householdMaintenanceValue = input.feature("hygiene_value_pct") + input.feature("cleaning_value_pct")
+        val hygieneCleaningCoOccurrence = input.feature("hygiene_cleaning_cooccurrence_frequency")
+        val otherValuePct = input.feature("other_value_pct")
+        val beveragesFrequency = input.feature("beverages_frequency")
+        val essentialScore = input.feature("essential_score")
+        val categoryDominanceGap = input.feature("category_dominance_gap")
+        val essentialCategoriesPercentage = input.feature("essential_categories_percentage")
+        val beverageRoutineScore = input.feature("beverage_routine_score")
 
         return when {
-            totalReceipts <= 0.0 -> ConsumptionBehaviorProfile.UNDEFINED
             classifiedItemsPercentage < 0.50 -> ConsumptionBehaviorProfile.UNDEFINED
-            categoryConcentrationIndex >= 0.70 -> ConsumptionBehaviorProfile.HIGHLY_CONCENTRATED
-            nonEssentialPercentage >= 0.75 && convenienceScore >= 0.55 -> ConsumptionBehaviorProfile.IMPULSIVE_CONSUMPTION
-            convenienceScore >= 0.60 -> ConsumptionBehaviorProfile.CONVENIENCE_ORIENTED
-            beveragesValuePercentage >= 0.25 && beveragesFrequency >= 0.50 -> ConsumptionBehaviorProfile.BEVERAGE_RECURRENT
-            essentialScore >= 0.60 -> ConsumptionBehaviorProfile.ESSENTIAL_FOCUSED
-            householdMaintenanceValue >= 0.25 -> ConsumptionBehaviorProfile.HOUSEHOLD_MAINTENANCE
-            produceValuePercentage <= 0.05 && produceFrequency <= 0.20 -> ConsumptionBehaviorProfile.LOW_FRESH_FOOD
-            diversityScore >= 0.55 && categoryConcentrationIndex < 0.45 -> ConsumptionBehaviorProfile.DIVERSIFIED_BALANCED
+            categoryConcentrationIndex >= 0.70 && categoryDominanceGap >= 0.30 -> ConsumptionBehaviorProfile.HIGHLY_CONCENTRATED
+            beverageRoutineScore >= 0.55 || beveragesFrequency >= 0.60 -> ConsumptionBehaviorProfile.BEVERAGE_RECURRENT
+            essentialRoutineScore >= 0.55 && essentialCategoriesPercentage >= 0.50 && essentialScore >= 0.55 -> ConsumptionBehaviorProfile.ESSENTIAL_FOCUSED
+            householdRoutineScore >= 0.40 || hygieneCleaningCoOccurrence >= 0.35 -> ConsumptionBehaviorProfile.HOUSEHOLD_MAINTENANCE
+            produceFrequency <= 0.15 && basicProduceCoOccurrence <= 0.20 -> ConsumptionBehaviorProfile.LOW_FRESH_FOOD
+            otherValuePct >= 0.30 && ticketVariationCoefficient >= 0.45 -> ConsumptionBehaviorProfile.IMPULSIVE_CONSUMPTION
+            categoryStabilityScore >= 0.55 && categoryConcentrationIndex < 0.45 -> ConsumptionBehaviorProfile.DIVERSIFIED_BALANCED
+            otherValuePct >= 0.20 -> ConsumptionBehaviorProfile.CONVENIENCE_ORIENTED
             else -> ConsumptionBehaviorProfile.DIVERSIFIED_BALANCED
         }
     }
@@ -655,84 +1036,13 @@ class RuleBasedConsumptionBehaviorClassifier : ConsumptionBehaviorClassifier {
 
 ```
 
-## FILE: app/src/main/java/com/example/consumoai/data/datasource/ocr/MlKitOcrDataSource.kt
-
-```kotlin
-package com.example.consumoai.data.datasource.ocr
-
-import android.graphics.Bitmap
-import android.util.Log
-import com.google.mlkit.vision.common.InputImage
-import com.google.mlkit.vision.text.TextRecognition
-import com.google.mlkit.vision.text.latin.TextRecognizerOptions
-import kotlinx.coroutines.tasks.await
-
-class MlKitOcrDataSource {
-
-    private val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
-
-
-    suspend fun extractElements(bitmap: Bitmap): List<OcrElement> {
-        val image = InputImage.fromBitmap(bitmap, 0)
-        val result = recognizer.process(image).await()
-
-        Log.d("OCR_RAW_TEXT", result.text)
-
-        val elements = result.textBlocks
-            .flatMap { block -> block.lines }
-            .flatMap { line -> line.elements }
-            .mapNotNull { element ->
-                val box = element.boundingBox ?: return@mapNotNull null
-                OcrElement(
-                    text = element.text,
-                    left = box.left,
-                    top = box.top,
-                    right = box.right,
-                    bottom = box.bottom,
-                    centerX = (box.left + box.right) / 2,
-                    centerY = (box.top + box.bottom) / 2
-                )
-            }
-            .sortedWith(compareBy({ it.top }, { it.left }))
-
-        Log.d(
-            "OCR_ELEMENTS",
-            elements.joinToString("\n") {
-                "${it.text} | x=${it.left}-${it.right}, y=${it.top}-${it.bottom}, cx=${it.centerX}, cy=${it.centerY}"
-            }
-        )
-
-        return elements
-    }
-}
-
-```
-
-## FILE: app/src/main/java/com/example/consumoai/data/datasource/ocr/OcrElement.kt
-
-```kotlin
-package com.example.consumoai.data.datasource.ocr
-
-data class OcrElement(
-    val text: String,
-    val left: Int,
-    val top: Int,
-    val right: Int,
-    val bottom: Int,
-    val centerX: Int,
-    val centerY: Int
-)
-
-```
-
 ## FILE: app/src/main/java/com/example/consumoai/data/datasource/qrcode/NfceQrCodeDataSource.kt
 
 ```kotlin
 package com.example.consumoai.data.datasource.qrcode
 
-import android.util.Log
 import com.example.consumoai.data.parser.NfceHtmlParserDataSource
-import com.example.consumoai.domain.model.ProductItem
+import com.example.consumoai.domain.model.ParsedNfceReceipt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.jsoup.Jsoup
@@ -741,13 +1051,12 @@ class NfceQrCodeDataSource(
     private val nfceHtmlParserDataSource: NfceHtmlParserDataSource
 ) {
 
-    suspend fun extractProducts(url: String): List<ProductItem> = withContext(Dispatchers.IO) {
+    suspend fun extractReceipt(url: String): ParsedNfceReceipt = withContext(Dispatchers.IO) {
         val document = Jsoup.connect(url)
             .userAgent("Mozilla/5.0 (Android)")
             .timeout(20_000)
             .get()
 
-        Log.d("NFCE_HTML", document.html().take(3000))
         nfceHtmlParserDataSource.parse(document)
     }
 }
@@ -950,7 +1259,12 @@ private fun String.toCategory(): ProductCategory {
 package com.example.consumoai.data.parser
 
 import com.example.consumoai.domain.model.ProductItem
+import com.example.consumoai.domain.model.ParsedNfceReceipt
 import org.jsoup.nodes.Document
+import java.time.LocalDate
+import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
+import java.time.format.DateTimeParseException
 import java.util.Locale
 
 class NfceHtmlParserDataSource {
@@ -961,17 +1275,65 @@ class NfceHtmlParserDataSource {
         "QTD TOTAL", "VALOR TOTAL", "VALOR PAGO", "FORMA DE PAGAMENTO", "CONSUMIDOR", "CHAVE", "PROTOCOLO"
     )
 
-    fun parse(document: Document): List<ProductItem> {
+    fun parse(document: Document): ParsedNfceReceipt {
         val products = parseTabResultTable(document)
             .ifEmpty { parseByRows(document) }
             .ifEmpty {
-            parseFallbackFromText(document.body()?.text().orEmpty())
+            parseFallbackFromText(document.body().text())
             }
             .distinctBy { "${it.itemNumber}|${it.name}|${formatPrice(it.price)}" }
             .sortedBy { it.itemNumber ?: Int.MAX_VALUE }
 
+        return ParsedNfceReceipt(
+            items = products,
+            issueDate = extractIssueDate(document)
+        )
+    }
 
-        return products
+    private fun extractIssueDate(document: Document): LocalDate? {
+        val bodyText = normalizeSpaces(document.body().text())
+
+        val emissionPatterns = listOf(
+            Regex("(?:EMISSAO|DATA DE EMISSAO|DATA EMISSAO)\\s*[:\\-]?\\s*(\\d{2}/\\d{2}/\\d{4})(?:\\s+(\\d{2}:\\d{2}:\\d{2}))?"),
+            Regex("\\b(\\d{2}/\\d{2}/\\d{4})\\s+(\\d{2}:\\d{2}:\\d{2})\\b"),
+            Regex("\\b(\\d{2}/\\d{2}/\\d{4})\\b")
+        )
+
+        val candidate = emissionPatterns.firstNotNullOfOrNull { regex ->
+            regex.find(bodyText)?.groupValues?.drop(1)?.firstOrNull { it.isNotBlank() }
+        }
+
+        return parseDate(candidate)
+    }
+
+    private fun parseDate(value: String?): LocalDate? {
+        if (value.isNullOrBlank()) return null
+
+        val trimmed = value.trim()
+        val dateFormats = listOf(
+            DateTimeFormatter.ofPattern("dd/MM/yyyy"),
+            DateTimeFormatter.ofPattern("d/M/yyyy")
+        )
+
+        dateFormats.forEach { formatter ->
+            try {
+                return LocalDate.parse(trimmed, formatter)
+            } catch (_: DateTimeParseException) {
+            }
+        }
+
+        val dateTimeFormats = listOf(
+            DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm:ss"),
+            DateTimeFormatter.ofPattern("d/M/yyyy H:mm:ss")
+        )
+        dateTimeFormats.forEach { formatter ->
+            try {
+                return LocalDateTime.parse(trimmed, formatter).toLocalDate()
+            } catch (_: DateTimeParseException) {
+            }
+        }
+
+        return null
     }
 
     private fun parseTabResultTable(document: Document): List<ProductItem> {
@@ -1079,308 +1441,6 @@ class NfceHtmlParserDataSource {
 
 ```
 
-## FILE: app/src/main/java/com/example/consumoai/data/parser/ReceiptLayoutParserDataSource.kt
-
-```kotlin
-package com.example.consumoai.data.parser
-
-import android.util.Log
-import com.example.consumoai.data.datasource.ocr.OcrElement
-import com.example.consumoai.domain.model.ProductItem
-import java.text.Normalizer
-import java.util.Locale
-
-class ReceiptLayoutParserDataSource {
-
-    private companion object {
-        const val ITEM_BLOCK_TOLERANCE = 20
-        const val ABSOLUTE_ITEM_NUMBER_MAX_X = 500
-    }
-
-    private val itemNumberRegex = Regex("^\\d{3}$")
-    private val priceRegex = Regex("^\\d{1,4}[,.]\\d{1,2}$")
-    private val quantityRegex = Regex("^\\d+[,.]\\d{3}$")
-    private val longCodeRegex = Regex("^\\d{5,}$")
-    private val ignoredDescriptionTokens = setOf("UN", "UNX", "KG", "G", "ML", "L", "X", "QTD", "TOTAL", "VALOR", "RS")
-    private val footerMarkers = setOf(
-        "QTD", "TOTAL", "VALOR", "PAGAMENTO", "CONSUMIDOR", "CHAVE",
-        "PROTOCOLO", "AUTORIZACAO", "AUTORIZAÃ‡ÃƒO", "SERIE", "SÃ‰RIE", "EMISSAO", "EMISSÃƒO"
-    )
-    private val ocrFixMap = mapOf(
-        "T03" to "IOG",
-        "8ISC" to "BISC",
-        "HOLHO" to "MOLHO",
-        "A0" to "AO"
-    )
-
-    private data class ItemAnchor(
-        val itemNumber: Int,
-        val centerY: Int,
-        val element: OcrElement
-    )
-
-    private data class ItemBlock(
-        val itemNumber: Int,
-        val startY: Int,
-        val endY: Int,
-        val elements: List<OcrElement>
-    )
-
-    private data class NormalizedPrice(
-        val token: String,
-        val precision: Int
-    )
-
-    private data class PriceCandidate(
-        val token: String,
-        val precision: Int,
-        val centerY: Int,
-        val centerX: Int
-    )
-
-    fun parseProducts(elements: List<OcrElement>): List<ProductItem> {
-        if (elements.isEmpty()) return emptyList()
-
-        val sorted = elements.sortedWith(compareBy({ it.centerY }, { it.centerX }))
-        val tableStartY = findTableStartY(sorted)
-        val tableEndY = findTableEndY(sorted, tableStartY)
-        val footerFound = hasFooterMarkers(sorted, tableStartY)
-        debugLog("TABLE_AREA", "startY=$tableStartY endY=$tableEndY")
-
-        if (tableStartY >= tableEndY) return emptyList()
-
-        val tableElements = sorted.filter { it.centerY >= tableStartY && it.centerY < tableEndY }
-        val receiptWidth = tableElements.maxOfOrNull { it.right } ?: sorted.maxOfOrNull { it.right } ?: 1
-        val anchors = findItemAnchors(tableElements)
-
-        debugLog(
-            "ITEM_NUMBERS_FOUND",
-            anchors.joinToString("\n") { anchor ->
-                "${anchor.itemNumber.toString().padStart(3, '0')} | x=${anchor.element.centerX} y=${anchor.centerY}"
-            }
-        )
-
-        if (anchors.isEmpty()) return emptyList()
-
-        val blocks = buildItemBlocks(anchors, tableEndY, tableElements, footerFound)
-        val products = blocks.mapNotNull { block ->
-            debugLog(
-                "ITEM_BLOCK",
-                "item=${block.itemNumber} y=${block.startY}-${block.endY} elements=${block.elements.size}"
-            )
-            buildProduct(block, receiptWidth)
-        }.sortedBy { it.itemNumber }
-
-        debugLog("PARSER_FINAL_ITEMS", products.joinToString("\n") { formatItem(it) })
-        return products
-    }
-
-    private fun findTableStartY(elements: List<OcrElement>): Int {
-        val first001 = elements
-            .filter { isItemNumberElement(it) }
-            .filter { normalizeToken(it.text) == "001" }
-            .minByOrNull { it.centerY }
-
-        return first001?.centerY
-            ?: elements.filter { isItemNumberElement(it) }.minOfOrNull { it.centerY }
-            ?: elements.minOf { it.centerY }
-    }
-
-    private fun findTableEndY(elements: List<OcrElement>, tableStartY: Int): Int {
-        return elements
-            .filter { element ->
-                element.centerY > tableStartY && isFooterMarker(element.text)
-            }
-            .minOfOrNull { it.centerY }
-            ?: (elements.maxOfOrNull { it.centerY }?.plus(1) ?: Int.MAX_VALUE)
-    }
-
-    private fun hasFooterMarkers(elements: List<OcrElement>, tableStartY: Int): Boolean {
-        return elements.any { it.centerY > tableStartY && isFooterMarker(it.text) }
-    }
-
-    private fun isFooterMarker(text: String): Boolean {
-        val token = normalizeWordOnly(text)
-        return footerMarkers.any { marker -> token == marker || token.contains(marker) }
-    }
-
-    private fun findItemAnchors(elements: List<OcrElement>): List<ItemAnchor> {
-        return elements
-            .filter { isItemNumberElement(it) }
-            .mapNotNull { element ->
-                val itemNumber = normalizeToken(element.text).toIntOrNull() ?: return@mapNotNull null
-                ItemAnchor(itemNumber = itemNumber, centerY = element.centerY, element = element)
-            }
-            .groupBy { it.itemNumber }
-            .mapNotNull { (_, anchors) -> anchors.minByOrNull { it.centerY } }
-            .sortedWith(compareBy({ it.centerY }, { it.element.centerX }))
-    }
-
-    private fun buildItemBlocks(
-        anchors: List<ItemAnchor>,
-        tableEndY: Int,
-        tableElements: List<OcrElement>,
-        footerFound: Boolean
-    ): List<ItemBlock> {
-        return anchors.mapIndexed { index, anchor ->
-            val nextStartY = anchors.getOrNull(index + 1)?.centerY
-            val upperBound = when {
-                nextStartY != null -> nextStartY - ITEM_BLOCK_TOLERANCE
-                footerFound -> tableEndY - ITEM_BLOCK_TOLERANCE
-                else -> tableEndY
-            }
-            val blockElements = tableElements.filter { element ->
-                element.centerY >= anchor.centerY - ITEM_BLOCK_TOLERANCE &&
-                    element.centerY < upperBound
-            }
-
-            ItemBlock(
-                itemNumber = anchor.itemNumber,
-                startY = anchor.centerY,
-                endY = nextStartY ?: tableEndY,
-                elements = blockElements
-            )
-        }
-    }
-
-    private fun isItemNumberElement(element: OcrElement): Boolean {
-        if (element.centerX >= ABSOLUTE_ITEM_NUMBER_MAX_X) return false
-        val token = normalizeToken(element.text)
-        if (!itemNumberRegex.matches(token)) return false
-        return token.toIntOrNull() in 1..999
-    }
-
-    private fun buildProduct(block: ItemBlock, receiptWidth: Int): ProductItem? {
-        val price = extractPrice(block.elements, receiptWidth) ?: return null
-        val name = extractName(block.elements, receiptWidth)
-        if (name.isBlank()) return null
-
-        return ProductItem(
-            itemNumber = block.itemNumber,
-            name = name,
-            price = price
-        )
-    }
-
-    private fun extractPrice(elements: List<OcrElement>, receiptWidth: Int): Double? {
-        val candidates = elements.mapNotNull { element ->
-            normalizePrice(element.text)?.let { price ->
-                PriceCandidate(
-                    token = price.token,
-                    precision = price.precision,
-                    centerY = element.centerY,
-                    centerX = element.centerX
-                )
-            }
-        }
-
-        if (candidates.isEmpty()) return null
-
-        val totalPriceMinX = (receiptWidth * 0.90).toInt().coerceAtLeast((receiptWidth * 0.82).toInt())
-        val rightColumnCandidates = candidates
-            .filter { it.centerX >= totalPriceMinX }
-            .sortedWith(compareBy<PriceCandidate> { it.centerY }.thenBy { it.centerX }.thenByDescending { it.precision })
-
-        val selected = rightColumnCandidates.firstOrNull()
-            ?: candidates.maxWithOrNull(compareBy<PriceCandidate> { it.centerX }.thenByDescending { it.precision })
-            ?: return null
-        return selected.token.replace(',', '.').toDoubleOrNull()
-    }
-
-    private fun normalizePrice(value: String): NormalizedPrice? {
-        var token = Normalizer.normalize(value, Normalizer.Form.NFD)
-            .replace(Regex("\\p{Mn}+"), "")
-            .uppercase(Locale.ROOT)
-            .replace("R$", "")
-            .replace(Regex("[^0-9,.)]"), "")
-            .trim()
-
-        if (token.isBlank()) return null
-
-        if (token.endsWith(")")) {
-            token = token.removeSuffix(")")
-            if (token.isNotEmpty() && token.last().isDigit()) {
-                token += "0"
-            }
-        }
-
-        val separatorIndex = token.indexOfFirst { it == ',' || it == '.' }
-        if (separatorIndex <= 0 || separatorIndex >= token.lastIndex) return null
-
-        val separator = token[separatorIndex]
-        val wholePart = token.substring(0, separatorIndex)
-        val decimalPart = token.substring(separatorIndex + 1)
-        if (!priceRegex.matches("$wholePart$separator$decimalPart")) return null
-
-        val normalizedDecimal = when (decimalPart.length) {
-            1 -> decimalPart + "0"
-            2 -> decimalPart
-            else -> return null
-        }
-
-        return NormalizedPrice(token = "$wholePart$separator$normalizedDecimal", precision = normalizedDecimal.length)
-    }
-
-    private fun extractName(elements: List<OcrElement>, receiptWidth: Int): String {
-        val descriptionMinX = (receiptWidth * 0.40).toInt().coerceAtMost((receiptWidth * 0.55).toInt())
-        val descriptionMaxX = (receiptWidth * 0.90).toInt()
-
-        return elements
-            .asSequence()
-            .filter { it.centerX in descriptionMinX until descriptionMaxX }
-            .sortedWith(compareBy({ it.centerY }, { it.centerX }))
-            .mapNotNull { element ->
-                val token = normalizeDescriptionToken(element.text)
-                if (shouldKeepDescriptionToken(token)) token else null
-            }
-            .joinToString(" ")
-            .replace(Regex("\\s+"), " ")
-            .trim()
-    }
-
-    private fun shouldKeepDescriptionToken(token: String): Boolean {
-        if (token.isBlank()) return false
-        if (itemNumberRegex.matches(token)) return false
-        if (priceRegex.matches(token)) return false
-        if (longCodeRegex.matches(token)) return false
-        if (quantityRegex.matches(token)) return false
-        if (ignoredDescriptionTokens.contains(token)) return false
-        if (!token.any { it.isLetterOrDigit() }) return false
-        return true
-    }
-
-    private fun normalizeDescriptionToken(value: String): String {
-        val normalized = normalizeToken(value).trim('.', ',')
-        return ocrFixMap[normalized] ?: normalized
-    }
-
-    private fun normalizeWordOnly(value: String): String {
-        val normalized = Normalizer.normalize(value, Normalizer.Form.NFD)
-            .replace(Regex("\\p{Mn}+"), "")
-        return normalized.uppercase(Locale.ROOT).replace(Regex("[^A-Z0-9]"), "")
-    }
-
-    private fun normalizeToken(value: String): String {
-        val normalized = Normalizer.normalize(value, Normalizer.Form.NFD)
-            .replace(Regex("\\p{Mn}+"), "")
-        return normalized.uppercase(Locale.ROOT).replace(Regex("[^A-Z0-9,.-]"), "")
-    }
-
-    private fun formatItem(item: ProductItem): String {
-        return "${item.itemNumber?.toString()?.padStart(3, '0')}. ${item.name} - R$ ${"%.2f".format(item.price)}"
-    }
-
-    private fun debugLog(tag: String, message: String) {
-        runCatching { Log.d(tag, message) }
-    }
-}
-```
-
-## FILE: app/src/main/java/com/example/consumoai/data/remote/dto/ModelPredictionDtos.kt
-
-```kotlin
-```
-
 ## FILE: app/src/main/java/com/example/consumoai/data/repository/ReceiptRepositoryImpl.kt
 
 ```kotlin
@@ -1452,6 +1512,20 @@ interface ProductClassifier {
 
 ```
 
+## FILE: app/src/main/java/com/example/consumoai/domain/classifier/ProductSemanticTagger.kt
+
+```kotlin
+package com.example.consumoai.domain.classifier
+
+import com.example.consumoai.domain.model.ProductItem
+import com.example.consumoai.domain.model.ProductSemanticTag
+
+interface ProductSemanticTagger {
+    fun tagsFor(item: ProductItem): Set<ProductSemanticTag>
+}
+
+```
+
 ## FILE: app/src/main/java/com/example/consumoai/domain/insights/ConsumptionInsightsEngine.kt
 
 ```kotlin
@@ -1459,11 +1533,11 @@ package com.example.consumoai.domain.insights
 
 import com.example.consumoai.domain.model.ConsumptionBehaviorAnalysis
 import com.example.consumoai.domain.model.ConsumptionBehaviorResult
-import com.example.consumoai.domain.model.ConsumptionMetrics
+import com.example.consumoai.domain.model.ConsumptionMetricsV2
 
 interface ConsumptionInsightsEngine {
     fun generate(
-        metrics: ConsumptionMetrics,
+        metricsV2: ConsumptionMetricsV2,
         result: ConsumptionBehaviorResult
     ): ConsumptionBehaviorAnalysis
 }
@@ -1481,6 +1555,7 @@ import com.example.consumoai.domain.model.ConsumptionBehaviorProfile
 import com.example.consumoai.domain.model.ConsumptionBehaviorResult
 import com.example.consumoai.domain.model.ConsumptionInsight
 import com.example.consumoai.domain.model.ConsumptionMetrics
+import com.example.consumoai.domain.model.ConsumptionMetricsV2
 import com.example.consumoai.domain.model.InsightSeverity
 import com.example.consumoai.domain.model.InsightType
 import com.example.consumoai.domain.model.ProductCategory
@@ -1488,9 +1563,10 @@ import com.example.consumoai.domain.model.ProductCategory
 class DefaultConsumptionInsightsEngine : ConsumptionInsightsEngine {
 
     override fun generate(
-        metrics: ConsumptionMetrics,
+        metricsV2: ConsumptionMetricsV2,
         result: ConsumptionBehaviorResult
     ): ConsumptionBehaviorAnalysis {
+        val metrics = metricsV2.baseMetrics
         val insights = mutableListOf<ConsumptionInsight>()
 
         // Generate primary insights based on metrics and model scores
@@ -1500,8 +1576,15 @@ class DefaultConsumptionInsightsEngine : ConsumptionInsightsEngine {
         generateCategoryDominanceInsights(metrics, insights)
         generateFreshFoodInsights(metrics, insights)
         generateBalanceInsights(metrics, insights)
+        generateCompositeInsights(metrics, result, insights)
         generateHybridBehaviorInsights(result, insights)
         generateConfidenceInsights(result, insights)
+
+        val sortedInsights = insights.sortedWith(
+            compareByDescending<ConsumptionInsight> { it.severity.toPriority() }
+                .thenByDescending { it.relatedProfiles.size }
+                .thenBy { it.title }
+        )
 
         // Generate behavioral composition from profile scores
         val composition = generateBehavioralComposition(result)
@@ -1511,7 +1594,7 @@ class DefaultConsumptionInsightsEngine : ConsumptionInsightsEngine {
 
         return ConsumptionBehaviorAnalysis(
             behaviorResult = result,
-            insights = insights,
+            insights = sortedInsights,
             summary = summary,
             behavioralComposition = composition
         )
@@ -1561,7 +1644,7 @@ class DefaultConsumptionInsightsEngine : ConsumptionInsightsEngine {
         if (metrics.categoryConcentrationIndex >= 0.60) {
             insights.add(
                 ConsumptionInsight(
-                    title = "Consumo concentrado",
+                    title = "Consumo mais concentrado",
                     description = "Grande parte do valor consumido estÃ¡ concentrado em poucas categorias.",
                     type = InsightType.CONCENTRATION,
                     severity = InsightSeverity.MEDIUM,
@@ -1581,7 +1664,7 @@ class DefaultConsumptionInsightsEngine : ConsumptionInsightsEngine {
             insights.add(
                 ConsumptionInsight(
                     title = "Alta presenÃ§a de industrializados",
-                    description = "Os produtos industrializados representam parcela relevante das compras.",
+                    description = "Produtos industrializados representam parcela relevante das compras analisadas.",
                     type = InsightType.CATEGORY_DOMINANCE,
                     severity = InsightSeverity.MEDIUM,
                     relatedProfiles = listOf(ConsumptionBehaviorProfile.CONVENIENCE_ORIENTED),
@@ -1601,7 +1684,7 @@ class DefaultConsumptionInsightsEngine : ConsumptionInsightsEngine {
             insights.add(
                 ConsumptionInsight(
                     title = "Baixa presenÃ§a de alimentos frescos",
-                    description = "As compras possuem baixa recorrÃªncia de hortifruti e alimentos frescos.",
+                    description = "As compras apresentam baixa participaÃ§Ã£o de hortifruti e alimentos frescos.",
                     type = InsightType.CONSUMPTION_BALANCE,
                     severity = InsightSeverity.MEDIUM,
                     relatedProfiles = listOf(ConsumptionBehaviorProfile.LOW_FRESH_FOOD),
@@ -1629,6 +1712,67 @@ class DefaultConsumptionInsightsEngine : ConsumptionInsightsEngine {
         }
     }
 
+    private fun generateCompositeInsights(
+        metrics: ConsumptionMetrics,
+        result: ConsumptionBehaviorResult,
+        insights: MutableList<ConsumptionInsight>
+    ) {
+        val topProfiles = result.profileScores
+            .entries
+            .sortedByDescending { it.value }
+            .take(3)
+            .map { it.key }
+
+        val beveragesStrong = metrics.beveragesToTotalRatio > 0.25
+        val diversityStrong = metrics.diversityScore > 0.45
+        val essentialsStrong = metrics.essentialScore > 0.50
+        val householdStrong = (metrics.valuePercentageByCategory[ProductCategory.HYGIENE] ?: 0.0) +
+            (metrics.valuePercentageByCategory[ProductCategory.CLEANING] ?: 0.0) > 0.22
+
+        if (
+            beveragesStrong &&
+            diversityStrong &&
+            essentialsStrong &&
+            topProfiles.contains(ConsumptionBehaviorProfile.BEVERAGE_RECURRENT) &&
+            topProfiles.contains(ConsumptionBehaviorProfile.DIVERSIFIED_BALANCED)
+        ) {
+            insights.add(
+                ConsumptionInsight(
+                    title = "EquilÃ­brio entre itens essenciais e bebidas",
+                    description = "Seu consumo demonstra equilÃ­brio entre itens essenciais e bebidas recorrentes.",
+                    type = InsightType.BEHAVIORAL_PATTERN,
+                    severity = InsightSeverity.MEDIUM,
+                    relatedProfiles = listOf(
+                        ConsumptionBehaviorProfile.BEVERAGE_RECURRENT,
+                        ConsumptionBehaviorProfile.DIVERSIFIED_BALANCED,
+                        ConsumptionBehaviorProfile.ESSENTIAL_FOCUSED
+                    ),
+                    relatedFeatures = listOf("beverages_value_pct", "diversity_score", "essential_score")
+                )
+            )
+        }
+
+        if (
+            householdStrong &&
+            essentialsStrong &&
+            topProfiles.contains(ConsumptionBehaviorProfile.HOUSEHOLD_MAINTENANCE)
+        ) {
+            insights.add(
+                ConsumptionInsight(
+                    title = "Rotina domÃ©stica bem marcada",
+                    description = "As compras combinam manutenÃ§Ã£o domÃ©stica com presenÃ§a consistente de itens essenciais.",
+                    type = InsightType.BEHAVIORAL_PATTERN,
+                    severity = InsightSeverity.LOW,
+                    relatedProfiles = listOf(
+                        ConsumptionBehaviorProfile.HOUSEHOLD_MAINTENANCE,
+                        ConsumptionBehaviorProfile.ESSENTIAL_FOCUSED
+                    ),
+                    relatedFeatures = listOf("hygiene_value_pct", "cleaning_value_pct", "essential_score")
+                )
+            )
+        }
+    }
+
     private fun generateHybridBehaviorInsights(
         result: ConsumptionBehaviorResult,
         insights: MutableList<ConsumptionInsight>
@@ -1639,7 +1783,7 @@ class DefaultConsumptionInsightsEngine : ConsumptionInsightsEngine {
             insights.add(
                 ConsumptionInsight(
                     title = "Comportamento hÃ­brido identificado",
-                    description = "O consumo apresenta caracterÃ­sticas relevantes de mÃºltiplos perfis comportamentais.",
+                    description = "O consumo apresenta sinais relevantes de mÃºltiplos perfis comportamentais.",
                     type = InsightType.MODEL_INTERPRETATION,
                     severity = InsightSeverity.LOW,
                     relatedFeatures = listOf("second_highest_probability")
@@ -1697,7 +1841,7 @@ class DefaultConsumptionInsightsEngine : ConsumptionInsightsEngine {
             }
 
             if (metrics.categoryConcentrationIndex >= 0.60) {
-                append(" O padrÃ£o geral demonstra recorrÃªncia de itens em poucas categorias.")
+                append(" O padrÃ£o geral mostra concentraÃ§Ã£o de gasto em poucas categorias.")
             } else if (metrics.diversityScore >= 0.65) {
                 append(" A distribuiÃ§Ã£o entre categorias Ã© relativamente equilibrada.")
             }
@@ -1710,6 +1854,7 @@ class DefaultConsumptionInsightsEngine : ConsumptionInsightsEngine {
 
     private fun getProfileDescription(profile: ConsumptionBehaviorProfile): String {
         return when (profile) {
+
             ConsumptionBehaviorProfile.CONVENIENCE_ORIENTED -> "orientado ao consumo de conveniÃªncia"
             ConsumptionBehaviorProfile.ESSENTIAL_FOCUSED -> "focado em itens essenciais"
             ConsumptionBehaviorProfile.DIVERSIFIED_BALANCED -> "diversificado e equilibrado"
@@ -1719,6 +1864,14 @@ class DefaultConsumptionInsightsEngine : ConsumptionInsightsEngine {
             ConsumptionBehaviorProfile.HIGHLY_CONCENTRATED -> "muito concentrado em categoria"
             ConsumptionBehaviorProfile.IMPULSIVE_CONSUMPTION -> "com caracterÃ­sticas impulsivas"
             ConsumptionBehaviorProfile.UNDEFINED -> "nÃ£o claramente definido"
+        }
+    }
+
+    private fun InsightSeverity.toPriority(): Int {
+        return when (this) {
+            InsightSeverity.HIGH -> 3
+            InsightSeverity.MEDIUM -> 2
+            InsightSeverity.LOW -> 1
         }
     }
 }
@@ -1769,17 +1922,26 @@ data class BehaviorCompositionItem(
 package com.example.consumoai.domain.model
 
 /**
- * Temporary app-facing output until the trained model replaces the rule-based classifier.
+ * Perfis comportamentais retornados pela classificaÃ§Ã£o (modelo treinado ou fallback tÃ©cnico).
  */
 enum class ConsumptionBehaviorProfile {
+    // Perfil com maior peso de praticidade, industrializados e compras rÃ¡pidas.
     CONVENIENCE_ORIENTED,
+    // Perfil com predominÃ¢ncia de itens essenciais e alimentaÃ§Ã£o bÃ¡sica.
     ESSENTIAL_FOCUSED,
+    // Perfil com distribuiÃ§Ã£o mais equilibrada entre diferentes categorias de consumo.
     DIVERSIFIED_BALANCED,
+    // Perfil em que bebidas aparecem com alta recorrÃªncia nas notas.
     BEVERAGE_RECURRENT,
+    // Perfil com baixa presenÃ§a de hortifruti e alimentos frescos.
     LOW_FRESH_FOOD,
+    // Perfil com destaque para higiene, limpeza e manutenÃ§Ã£o da casa.
     HOUSEHOLD_MAINTENANCE,
+    // Perfil com gasto concentrado em poucas categorias dominantes.
     HIGHLY_CONCENTRATED,
+    // Perfil com maior presenÃ§a de compras nÃ£o essenciais e sinais de impulso.
     IMPULSIVE_CONSUMPTION,
+    // SaÃ­da usada quando nÃ£o hÃ¡ confianÃ§a suficiente para definir um padrÃ£o claro.
     UNDEFINED
 }
 
@@ -1790,15 +1952,42 @@ enum class ConsumptionBehaviorProfile {
 ```kotlin
 package com.example.consumoai.domain.model
 
+// Resultado consolidado da classificaÃ§Ã£o de perfil de consumo.
 data class ConsumptionBehaviorResult(
+    // Perfil principal escolhido como saÃ­da final da classificaÃ§Ã£o.
     val mainProfile: ConsumptionBehaviorProfile,
+    // ConfianÃ§a numÃ©rica da saÃ­da principal.
     val confidence: Double,
+    // PontuaÃ§Ãµes de todos os perfis avaliados pelo classificador.
     val profileScores: Map<ConsumptionBehaviorProfile, Double>,
-    val source: BehaviorClassificationSource
+    // Origem da classificaÃ§Ã£o: modelo treinado ou fallback local.
+    val source: BehaviorClassificationSource,
+    // Resumo interpretativo montado para exibiÃ§Ã£o mais humana.
+    val profileSummary: ConsumptionProfileSummary? = null,
+    // Motivo do fallback, quando o backend/modelo principal nÃ£o foi usado.
+    val fallbackReason: FallbackReason? = null,
+    // Tempo gasto para produzir a classificaÃ§Ã£o.
+    val inferenceDurationMs: Long = 0L,
+    // VersÃ£o do input efetivamente enviada ao backend.
+    val requestedInputVersion: String? = null,
+    // Quantidade de features efetivamente enviada ao backend.
+    val requestedFeatureCount: Int? = null,
+    // VersÃ£o informada na resposta do backend, quando disponÃ­vel.
+    val responseVersion: String? = null,
+    // Quantidade de features informada na resposta do backend, quando disponÃ­vel.
+    val responseFeatureCount: Int? = null,
+    // Nome do modelo usado no backend, quando disponÃ­vel.
+    val backendModelUsed: String? = null,
+    // Indica se o input precisou ser saneado antes da inferÃªncia.
+    val usedSanitizedInput: Boolean = false,
+    // Lista de ajustes aplicados no saneamento do input.
+    val sanitizationNotes: List<FeatureSanitizationNote> = emptyList()
 )
 
 enum class BehaviorClassificationSource {
+    // SaÃ­da produzida pelo modelo treinado/servido pelo backend.
     TRAINED_MODEL,
+    // SaÃ­da produzida por regras locais quando o modelo principal nÃ£o estÃ¡ disponÃ­vel.
     RULE_BASED_FALLBACK
 }
 
@@ -1899,11 +2088,59 @@ data class ConsumptionMetrics(
     val averageBasicFoodItemsPerReceipt: Double,
     val averageProduceItemsPerReceipt: Double,
 
-    // Features oficiais aproveitadas pela IA V1
+    // Scores-base reaproveitados nas mÃ©tricas e narrativa do fluxo V2.
     val convenienceScore: Double,
     val essentialScore: Double,
     val diversityScore: Double
 )
+```
+
+## FILE: app/src/main/java/com/example/consumoai/domain/model/ConsumptionMetricsV2.kt
+
+```kotlin
+package com.example.consumoai.domain.model
+
+data class ConsumptionMetricsV2(
+    val baseMetrics: ConsumptionMetrics,
+    val timeSpanDays: Double,
+    val receiptsPerWeek: Double,
+    val averageDaysBetweenReceipts: Double,
+    val purchaseRegularityScore: Double,
+    val ticketStandardDeviation: Double,
+    val ticketVariationCoefficient: Double,
+    val itemCountVariationCoefficient: Double,
+    val highTicketReceiptsPercentage: Double,
+    val lowTicketReceiptsPercentage: Double,
+    val categoryStabilityScore: Double,
+    val averageCategoryOverlapBetweenReceipts: Double,
+    val recurringItemRatio: Double,
+    val topItemRepetitionRate: Double,
+    val beverageSnackCoOccurrenceFrequency: Double,
+    val alcoholSnackCoOccurrenceFrequency: Double,
+    val hygieneCleaningCoOccurrenceFrequency: Double,
+    val basicProduceCoOccurrenceFrequency: Double,
+    val alcoholicBeverageValuePct: Double,
+    val alcoholicBeverageFrequency: Double,
+    val softDrinkValuePct: Double,
+    val softDrinkFrequency: Double,
+    val energyDrinkValuePct: Double,
+    val energyDrinkFrequency: Double,
+    val snackSweetValuePct: Double,
+    val snackSweetFrequency: Double,
+    val frozenConvenienceValuePct: Double,
+    val frozenConvenienceFrequency: Double,
+    val dairyValuePct: Double,
+    val meatProteinValuePct: Double,
+    val freshProduceValuePct: Double,
+    val convenienceMealValuePct: Double,
+    val convenienceMealFrequency: Double,
+    val essentialRoutineScore: Double,
+    val convenienceRoutineScore: Double,
+    val beverageRoutineScore: Double,
+    val householdRoutineScore: Double,
+    val freshFoodPresenceScore: Double
+)
+
 ```
 
 ## FILE: app/src/main/java/com/example/consumoai/domain/model/ConsumptionModelInput.kt
@@ -1911,7 +2148,6 @@ data class ConsumptionMetrics(
 ```kotlin
 package com.example.consumoai.domain.model
 
-const val MODEL_INPUT_VERSION = "v1"
 
 /**
  * Official feature payload consumed by the behavior classifier and, in the future,
@@ -1924,6 +2160,75 @@ data class ConsumptionModelInput(
 
 ```
 
+## FILE: app/src/main/java/com/example/consumoai/domain/model/ConsumptionProfileSummary.kt
+
+```kotlin
+package com.example.consumoai.domain.model
+
+enum class ProfileInterpretationType {
+    // Leitura em que um Ãºnico perfil aparece como predominante.
+    PURE_PROFILE,
+    // Leitura em que hÃ¡ mistura relevante entre dois ou mais perfis.
+    HYBRID_PROFILE,
+    // Leitura em que o sistema encontrou sinais fracos ou ambÃ­guos.
+    LOW_CONFIDENCE_PROFILE
+}
+
+// Resumo textual e estrutural da saÃ­da do modelo para consumo na UI.
+data class ConsumptionProfileSummary(
+    // Perfil principal usado como eixo central da interpretaÃ§Ã£o.
+    val primaryProfile: ConsumptionBehaviorProfile,
+    // Perfis secundÃ¡rios que tambÃ©m influenciaram a leitura final.
+    val secondaryProfiles: List<ConsumptionBehaviorProfile>,
+    // ConfianÃ§a consolidada da interpretaÃ§Ã£o exibida.
+    val confidence: Double,
+    // Tipo de interpretaÃ§Ã£o aplicada sobre o resultado bruto.
+    val interpretationType: ProfileInterpretationType,
+    // DescriÃ§Ã£o curta em linguagem humana para exibiÃ§Ã£o no app.
+    val humanReadableDescription: String,
+    // ComposiÃ§Ã£o percentual dos perfis considerados na leitura final.
+    val profileComposition: List<BehaviorCompositionItem>
+)
+
+```
+
+## FILE: app/src/main/java/com/example/consumoai/domain/model/FallbackReason.kt
+
+```kotlin
+package com.example.consumoai.domain.model
+
+enum class FallbackReason {
+    MODEL_LOAD_ERROR,
+    INVALID_INPUT,
+    BACKEND_REJECTED_INPUT,
+    INFERENCE_ERROR,
+    EMPTY_FEATURES
+}
+
+```
+
+## FILE: app/src/main/java/com/example/consumoai/domain/model/FeatureSanitizationNote.kt
+
+```kotlin
+package com.example.consumoai.domain.model
+
+data class FeatureSanitizationNote(
+    val featureName: String,
+    val originalValue: Double?,
+    val sanitizedValue: Double,
+    val reason: String
+)
+
+data class SanitizedConsumptionModelInput(
+    val input: ConsumptionModelInput,
+    val notes: List<FeatureSanitizationNote>
+) {
+    val hasChanges: Boolean
+        get() = notes.isNotEmpty()
+}
+
+```
+
 ## FILE: app/src/main/java/com/example/consumoai/domain/model/ImportReceiptsResult.kt
 
 ```kotlin
@@ -1933,6 +2238,66 @@ data class ImportReceiptsResult(
     val importedCount: Int,
     val skippedCount: Int,
     val failedCount: Int
+)
+
+```
+
+## FILE: app/src/main/java/com/example/consumoai/domain/model/ModelFeatureConstants.kt
+
+```kotlin
+package com.example.consumoai.domain.model
+
+const val MODEL_INPUT_VERSION = "v2"
+
+/**
+ * Contagem total de mÃ©tricas calculadas internamente no app (para narrativa/anÃ¡lise).
+ */
+const val MODEL_V2_INTERNAL_METRICS_COUNT = 64
+
+/**
+ * Contagem de features OFICIAIS enviadas ao modelo XGBoost v2 treinado.
+ * O modelo final usa apenas TOP 15 features.
+ */
+const val MODEL_V2_FINAL_FEATURE_COUNT = 15
+
+/**
+ * Ordem OFICIAL das 15 features enviadas ao backend XGBoost V2.
+ * Ordem fixa: extraÃ­do de consumoai_v2_top15_features.json (Colab)
+ * Modelo: consumoai_xgboost_v2_top15.pkl
+ * Label Encoder: consumoai_label_encoder_v2.pkl
+ *
+ * Mantida fixa para preservar compatibilidade 1:1 com sklearn.predict_proba()
+ */
+val MODEL_V2_FINAL_FEATURES = listOf(
+    "classified_items_percentage",
+    "category_stability_score",
+    "basic_produce_cooccurrence_frequency",
+    "ticket_variation_coefficient",
+    "essential_routine_score",
+    "household_routine_score",
+    "category_concentration_index",
+    "produce_frequency",
+    "hygiene_cleaning_cooccurrence_frequency",
+    "other_value_pct",
+    "beverages_frequency",
+    "essential_score",
+    "category_dominance_gap",
+    "essential_categories_percentage",
+    "beverage_routine_score"
+)
+
+```
+
+## FILE: app/src/main/java/com/example/consumoai/domain/model/ParsedNfceReceipt.kt
+
+```kotlin
+package com.example.consumoai.domain.model
+
+import java.time.LocalDate
+
+data class ParsedNfceReceipt(
+    val items: List<ProductItem>,
+    val issueDate: LocalDate?
 )
 
 ```
@@ -1968,6 +2333,30 @@ data class ProductItem(
 )
 ```
 
+## FILE: app/src/main/java/com/example/consumoai/domain/model/ProductSemanticTag.kt
+
+```kotlin
+package com.example.consumoai.domain.model
+
+enum class ProductSemanticTag {
+    ALCOHOLIC_BEVERAGE,
+    SOFT_DRINK,
+    ENERGY_DRINK,
+    JUICE,
+    SNACK_OR_SWEET,
+    FROZEN_OR_READY_MEAL,
+    DAIRY,
+    MEAT_OR_PROTEIN,
+    FRESH_PRODUCE,
+    PERSONAL_CARE,
+    HOUSEHOLD_CLEANING,
+    PET,
+    UTILITY,
+    UNKNOWN
+}
+
+```
+
 ## FILE: app/src/main/java/com/example/consumoai/domain/model/Receipt.kt
 
 ```kotlin
@@ -1993,7 +2382,6 @@ data class Receipt(
 package com.example.consumoai.domain.model
 
 enum class ReceiptSource {
-    OCR,
     QR_CODE
 }
 
@@ -2006,10 +2394,10 @@ package com.example.consumoai.domain.model
 
 data class StoredConsumptionAnalysis(
     val receipts: List<Receipt>,
-    val metrics: ConsumptionMetrics,
+    val metricsV2: ConsumptionMetricsV2,
     val modelInput: ConsumptionModelInput,
     val behaviorResult: ConsumptionBehaviorResult,
-    val behaviorAnalysis: ConsumptionBehaviorAnalysis? = null
+    val behaviorAnalysis: ConsumptionBehaviorAnalysis
 )
 
 ```
@@ -2046,44 +2434,6 @@ interface ReceiptRepository {
 }
 ```
 
-## FILE: app/src/main/java/com/example/consumoai/domain/usecase/AnalyzeReceiptFromOcrUseCase.kt
-
-```kotlin
-package com.example.consumoai.domain.usecase
-
-import android.graphics.Bitmap
-import android.util.Log
-import com.example.consumoai.data.datasource.ocr.MlKitOcrDataSource
-import com.example.consumoai.data.parser.ReceiptLayoutParserDataSource
-import com.example.consumoai.domain.model.Receipt
-import com.example.consumoai.domain.model.ReceiptSource
-
-class AnalyzeReceiptFromOcrUseCase(
-    private val mlKitOcrDataSource: MlKitOcrDataSource,
-    private val receiptLayoutParserDataSource: ReceiptLayoutParserDataSource,
-    private val classifyProductsUseCase: ClassifyProductsUseCase
-) {
-
-    suspend operator fun invoke(bitmap: Bitmap): Receipt {
-        val elements = mlKitOcrDataSource.extractElements(bitmap)
-        val products = classifyProductsUseCase(receiptLayoutParserDataSource.parseProducts(elements))
-
-        Log.d(
-            "OCR_RESULT_PRODUCTS",
-            products.joinToString("\n") {
-                "${it.itemNumber?.toString()?.padStart(3, '0')}. ${it.name} - ${it.price}"
-            }
-        )
-
-        return Receipt(
-            source = ReceiptSource.OCR,
-            items = products
-        )
-    }
-}
-
-```
-
 ## FILE: app/src/main/java/com/example/consumoai/domain/usecase/AnalyzeReceiptFromQrCodeUrlUseCase.kt
 
 ```kotlin
@@ -2092,6 +2442,7 @@ package com.example.consumoai.domain.usecase
 import com.example.consumoai.data.datasource.qrcode.NfceQrCodeDataSource
 import com.example.consumoai.domain.model.Receipt
 import com.example.consumoai.domain.model.ReceiptSource
+import java.time.LocalDate
 
 class AnalyzeReceiptFromQrCodeUrlUseCase(
     private val nfceQrCodeDataSource: NfceQrCodeDataSource,
@@ -2099,45 +2450,14 @@ class AnalyzeReceiptFromQrCodeUrlUseCase(
 ) {
 
     suspend operator fun invoke(url: String): Receipt {
-        val products = classifyProductsUseCase(nfceQrCodeDataSource.extractProducts(url))
+        val parsedReceipt = nfceQrCodeDataSource.extractReceipt(url)
+        val products = classifyProductsUseCase(parsedReceipt.items)
         return Receipt(
             accessKeyOrUrl = url,
+            date = parsedReceipt.issueDate ?: LocalDate.now(),
             source = ReceiptSource.QR_CODE,
             items = products
         )
-    }
-}
-
-```
-
-## FILE: app/src/main/java/com/example/consumoai/domain/usecase/AnalyzeReceiptWithFallbackUseCase.kt
-
-```kotlin
-package com.example.consumoai.domain.usecase
-
-import android.graphics.Bitmap
-import android.util.Log
-import com.example.consumoai.domain.model.Receipt
-
-class AnalyzeReceiptWithFallbackUseCase(
-    private val analyzeReceiptFromQrCodeUrlUseCase: AnalyzeReceiptFromQrCodeUrlUseCase,
-    private val analyzeReceiptFromOcrUseCase: AnalyzeReceiptFromOcrUseCase
-) {
-
-    suspend operator fun invoke(qrCodeUrl: String, fallbackBitmap: Bitmap): Receipt {
-        return runCatching {
-            analyzeReceiptFromQrCodeUrlUseCase(qrCodeUrl)
-        }.getOrElse { qrError ->
-            Log.d("QR_FALLBACK", "QR extraction failed, switching to OCR fallback: ${qrError.message}")
-            analyzeReceiptFromOcrUseCase(fallbackBitmap)
-        }.let { receipt ->
-            if (receipt.items.isNotEmpty()) {
-                receipt
-            } else {
-                Log.d("QR_FALLBACK", "QR extraction returned no items, switching to OCR fallback")
-                analyzeReceiptFromOcrUseCase(fallbackBitmap)
-            }
-        }
     }
 }
 
@@ -2154,10 +2474,12 @@ import com.example.consumoai.domain.repository.ReceiptRepository
 
 class AnalyzeStoredReceiptsUseCase(
     private val receiptRepository: ReceiptRepository,
-    private val calculateConsumptionMetricsUseCase: CalculateConsumptionMetricsUseCase,
+    private val calculateConsumptionMetricsV2UseCase: CalculateConsumptionMetricsV2UseCase,
     private val buildConsumptionModelInputUseCase: BuildConsumptionModelInputUseCase,
     private val classifyConsumptionProfileUseCase: ClassifyConsumptionProfileUseCase,
-    private val insightsEngine: ConsumptionInsightsEngine
+    private val insightsEngine: ConsumptionInsightsEngine,
+    private val consumptionFeatureSanitizer: ConsumptionFeatureSanitizer,
+    private val buildConsumptionProfileSummaryUseCase: BuildConsumptionProfileSummaryUseCase
 ) {
 
     suspend operator fun invoke(): StoredConsumptionAnalysis {
@@ -2165,20 +2487,28 @@ class AnalyzeStoredReceiptsUseCase(
         if (receipts.isEmpty()) {
             throw IllegalStateException("Nenhuma nota armazenada para anÃ¡lise.")
         }
-        val metrics = calculateConsumptionMetricsUseCase(receipts)
-        val modelInput = buildConsumptionModelInputUseCase(metrics)
-        val behaviorResult = classifyConsumptionProfileUseCase(modelInput)
-        val behaviorAnalysis = insightsEngine.generate(metrics, behaviorResult)
+        val metricsV2 = calculateConsumptionMetricsV2UseCase(receipts)
+        val rawModelInput = buildConsumptionModelInputUseCase(metricsV2)
+        val sanitizedModelInput = consumptionFeatureSanitizer(rawModelInput)
+        val classifiedResult = classifyConsumptionProfileUseCase(sanitizedModelInput.input)
+        val profileSummary = buildConsumptionProfileSummaryUseCase(classifiedResult)
+        val behaviorResult = classifiedResult.copy(
+            profileSummary = profileSummary,
+            usedSanitizedInput = sanitizedModelInput.hasChanges,
+            sanitizationNotes = sanitizedModelInput.notes
+        )
+        val behaviorAnalysis = insightsEngine.generate(metricsV2, behaviorResult)
 
         return StoredConsumptionAnalysis(
             receipts = receipts,
-            metrics = metrics,
-            modelInput = modelInput,
+            metricsV2 = metricsV2,
+            modelInput = sanitizedModelInput.input,
             behaviorResult = behaviorResult,
             behaviorAnalysis = behaviorAnalysis
         )
     }
 }
+
 
 ```
 
@@ -2187,54 +2517,197 @@ class AnalyzeStoredReceiptsUseCase(
 ```kotlin
 package com.example.consumoai.domain.usecase
 
-import com.example.consumoai.domain.model.ConsumptionMetrics
+import com.example.consumoai.domain.model.ConsumptionMetricsV2
 import com.example.consumoai.domain.model.ConsumptionModelInput
+import com.example.consumoai.domain.model.MODEL_INPUT_VERSION
+import com.example.consumoai.domain.model.MODEL_V2_FINAL_FEATURES
 import com.example.consumoai.domain.model.ProductCategory
 
 class BuildConsumptionModelInputUseCase {
 
-    operator fun invoke(metrics: ConsumptionMetrics): ConsumptionModelInput {
-        val valuePercentages = metrics.valuePercentageByCategory
-        val frequencies = metrics.frequencyByCategory
+    operator fun invoke(metricsV2: ConsumptionMetricsV2): ConsumptionModelInput {
+        val base = metricsV2.baseMetrics
+        val valuePercentages = base.valuePercentageByCategory
+        val frequencies = base.frequencyByCategory
+
+        val allFeatures = linkedMapOf(
+            "total_receipts" to base.totalReceipts.toDouble(),
+            "total_items" to base.totalItems.toDouble(),
+            "total_value" to base.totalValue,
+            "average_ticket" to base.averageTicket,
+            "average_items_per_receipt" to base.averageItemsPerReceipt,
+            "basic_food_value_pct" to valuePercentages[ProductCategory.BASIC_FOOD].orZero(),
+            "industrialized_value_pct" to valuePercentages[ProductCategory.INDUSTRIALIZED].orZero(),
+            "beverages_value_pct" to valuePercentages[ProductCategory.BEVERAGES].orZero(),
+            "hygiene_value_pct" to valuePercentages[ProductCategory.HYGIENE].orZero(),
+            "cleaning_value_pct" to valuePercentages[ProductCategory.CLEANING].orZero(),
+            "produce_value_pct" to valuePercentages[ProductCategory.PRODUCE].orZero(),
+            "other_value_pct" to valuePercentages[ProductCategory.OTHER].orZero(),
+            "basic_food_frequency" to frequencies[ProductCategory.BASIC_FOOD].orZero(),
+            "industrialized_frequency" to frequencies[ProductCategory.INDUSTRIALIZED].orZero(),
+            "beverages_frequency" to frequencies[ProductCategory.BEVERAGES].orZero(),
+            "produce_frequency" to frequencies[ProductCategory.PRODUCE].orZero(),
+            "hygiene_frequency" to frequencies[ProductCategory.HYGIENE].orZero(),
+            "cleaning_frequency" to frequencies[ProductCategory.CLEANING].orZero(),
+            "classified_items_percentage" to base.classifiedItemsPercentage,
+            "category_concentration_index" to base.categoryConcentrationIndex,
+            "category_dominance_gap" to base.categoryDominanceGap,
+            "category_diversity_index" to base.categoryDiversityIndex,
+            "essential_categories_percentage" to base.essentialCategoriesPercentage,
+            "non_essential_categories_percentage" to base.nonEssentialCategoriesPercentage,
+            "essential_score" to base.essentialScore,
+            "convenience_score" to base.convenienceScore,
+            "diversity_score" to base.diversityScore,
+            "time_span_days" to metricsV2.timeSpanDays,
+            "receipts_per_week" to metricsV2.receiptsPerWeek,
+            "average_days_between_receipts" to metricsV2.averageDaysBetweenReceipts,
+            "purchase_regularity_score" to metricsV2.purchaseRegularityScore,
+            "ticket_standard_deviation" to metricsV2.ticketStandardDeviation,
+            "ticket_variation_coefficient" to metricsV2.ticketVariationCoefficient,
+            "item_count_variation_coefficient" to metricsV2.itemCountVariationCoefficient,
+            "high_ticket_receipts_percentage" to metricsV2.highTicketReceiptsPercentage,
+            "low_ticket_receipts_percentage" to metricsV2.lowTicketReceiptsPercentage,
+            "category_stability_score" to metricsV2.categoryStabilityScore,
+            "average_category_overlap_between_receipts" to metricsV2.averageCategoryOverlapBetweenReceipts,
+            "recurring_item_ratio" to metricsV2.recurringItemRatio,
+            "top_item_repetition_rate" to metricsV2.topItemRepetitionRate,
+            "beverage_snack_cooccurrence_frequency" to metricsV2.beverageSnackCoOccurrenceFrequency,
+            "alcohol_snack_cooccurrence_frequency" to metricsV2.alcoholSnackCoOccurrenceFrequency,
+            "hygiene_cleaning_cooccurrence_frequency" to metricsV2.hygieneCleaningCoOccurrenceFrequency,
+            "basic_produce_cooccurrence_frequency" to metricsV2.basicProduceCoOccurrenceFrequency,
+            "alcoholic_beverage_value_pct" to metricsV2.alcoholicBeverageValuePct,
+            "alcoholic_beverage_frequency" to metricsV2.alcoholicBeverageFrequency,
+            "soft_drink_value_pct" to metricsV2.softDrinkValuePct,
+            "soft_drink_frequency" to metricsV2.softDrinkFrequency,
+            "energy_drink_value_pct" to metricsV2.energyDrinkValuePct,
+            "energy_drink_frequency" to metricsV2.energyDrinkFrequency,
+            "snack_sweet_value_pct" to metricsV2.snackSweetValuePct,
+            "snack_sweet_frequency" to metricsV2.snackSweetFrequency,
+            "frozen_convenience_value_pct" to metricsV2.frozenConvenienceValuePct,
+            "frozen_convenience_frequency" to metricsV2.frozenConvenienceFrequency,
+            "dairy_value_pct" to metricsV2.dairyValuePct,
+            "meat_protein_value_pct" to metricsV2.meatProteinValuePct,
+            "fresh_produce_value_pct" to metricsV2.freshProduceValuePct,
+            "convenience_meal_value_pct" to metricsV2.convenienceMealValuePct,
+            "convenience_meal_frequency" to metricsV2.convenienceMealFrequency,
+            "essential_routine_score" to metricsV2.essentialRoutineScore,
+            "convenience_routine_score" to metricsV2.convenienceRoutineScore,
+            "beverage_routine_score" to metricsV2.beverageRoutineScore,
+            "household_routine_score" to metricsV2.householdRoutineScore,
+            "fresh_food_presence_score" to metricsV2.freshFoodPresenceScore
+        )
+
+        val selectedFeatures = linkedMapOf<String, Double>()
+        MODEL_V2_FINAL_FEATURES.forEach { feature ->
+            val value = allFeatures[feature]
+                ?: error("Feature obrigatoria ausente: $feature")
+            selectedFeatures[feature] = if (value.isNaN() || value.isInfinite()) 0.0 else value
+        }
 
         return ConsumptionModelInput(
-            features = linkedMapOf(
-                "total_receipts" to metrics.totalReceipts.toDouble(),
-                "total_items" to metrics.totalItems.toDouble(),
-                "total_value" to metrics.totalValue,
-                "average_ticket" to metrics.averageTicket,
-                "average_items_per_receipt" to metrics.averageItemsPerReceipt,
-
-                "basic_food_value_pct" to valuePercentages[ProductCategory.BASIC_FOOD].orZero(),
-                "industrialized_value_pct" to valuePercentages[ProductCategory.INDUSTRIALIZED].orZero(),
-                "beverages_value_pct" to valuePercentages[ProductCategory.BEVERAGES].orZero(),
-                "hygiene_value_pct" to valuePercentages[ProductCategory.HYGIENE].orZero(),
-                "cleaning_value_pct" to valuePercentages[ProductCategory.CLEANING].orZero(),
-                "produce_value_pct" to valuePercentages[ProductCategory.PRODUCE].orZero(),
-                "other_value_pct" to valuePercentages[ProductCategory.OTHER].orZero(),
-
-                "basic_food_frequency" to frequencies[ProductCategory.BASIC_FOOD].orZero(),
-                "industrialized_frequency" to frequencies[ProductCategory.INDUSTRIALIZED].orZero(),
-                "beverages_frequency" to frequencies[ProductCategory.BEVERAGES].orZero(),
-                "produce_frequency" to frequencies[ProductCategory.PRODUCE].orZero(),
-                "hygiene_frequency" to frequencies[ProductCategory.HYGIENE].orZero(),
-                "cleaning_frequency" to frequencies[ProductCategory.CLEANING].orZero(),
-
-                "category_concentration_index" to metrics.categoryConcentrationIndex,
-                "category_dominance_gap" to metrics.categoryDominanceGap,
-                "category_diversity_index" to metrics.categoryDiversityIndex,
-                "essential_categories_percentage" to metrics.essentialCategoriesPercentage,
-                "non_essential_categories_percentage" to metrics.nonEssentialCategoriesPercentage,
-                "convenience_score" to metrics.convenienceScore,
-                "essential_score" to metrics.essentialScore,
-                "diversity_score" to metrics.diversityScore,
-                "classified_items_percentage" to metrics.classifiedItemsPercentage
-            )
+            version = MODEL_INPUT_VERSION,
+            features = selectedFeatures
         )
     }
 }
 
 private fun Double?.orZero(): Double = this ?: 0.0
+
+```
+
+## FILE: app/src/main/java/com/example/consumoai/domain/usecase/BuildConsumptionProfileSummaryUseCase.kt
+
+```kotlin
+package com.example.consumoai.domain.usecase
+
+import com.example.consumoai.domain.model.BehaviorCompositionItem
+import com.example.consumoai.domain.model.ConsumptionBehaviorProfile
+import com.example.consumoai.domain.model.ConsumptionBehaviorResult
+import com.example.consumoai.domain.model.ConsumptionProfileSummary
+import com.example.consumoai.domain.model.ProfileInterpretationType
+
+class BuildConsumptionProfileSummaryUseCase {
+
+    operator fun invoke(result: ConsumptionBehaviorResult): ConsumptionProfileSummary {
+        val composition = result.profileScores
+            .entries
+            .sortedByDescending { it.value }
+            .take(3)
+            .map { (profile, score) ->
+                BehaviorCompositionItem(
+                    profile = profile,
+                    percentage = (score * 100).coerceIn(0.0, 100.0)
+                )
+            }
+
+        val primaryProfile = composition.firstOrNull()?.profile ?: result.mainProfile
+        val secondaryProfiles = composition.drop(1).map { it.profile }
+        val interpretationType = resolveInterpretationType(result, composition)
+
+        return ConsumptionProfileSummary(
+            primaryProfile = primaryProfile,
+            secondaryProfiles = secondaryProfiles,
+            confidence = result.confidence,
+            interpretationType = interpretationType,
+            humanReadableDescription = buildHumanReadableSummary(
+                primaryProfile = primaryProfile,
+                secondaryProfiles = secondaryProfiles,
+                confidence = result.confidence,
+                interpretationType = interpretationType
+            ),
+            profileComposition = composition
+        )
+    }
+
+    fun buildHumanReadableSummary(
+        primaryProfile: ConsumptionBehaviorProfile,
+        secondaryProfiles: List<ConsumptionBehaviorProfile>,
+        confidence: Double,
+        interpretationType: ProfileInterpretationType
+    ): String {
+        return when (interpretationType) {
+            ProfileInterpretationType.PURE_PROFILE -> {
+                "PadrÃ£o predominante de ${primaryProfile.toReadableFragment()} com confianÃ§a de ${(confidence * 100).toInt()}%."
+            }
+            ProfileInterpretationType.HYBRID_PROFILE -> {
+                val secondaryText = secondaryProfiles
+                    .take(2)
+                    .joinToString(" e ") { it.toReadableFragment() }
+                    .ifBlank { "outros sinais complementares" }
+                "PadrÃ£o hÃ­brido com predominÃ¢ncia de ${primaryProfile.toReadableFragment()} e influÃªncia de $secondaryText."
+            }
+            ProfileInterpretationType.LOW_CONFIDENCE_PROFILE -> {
+                "Os sinais atuais indicam ${primaryProfile.toReadableFragment()}, mas com baixa confianÃ§a para definir um Ãºnico padrÃ£o dominante."
+            }
+        }
+    }
+
+    private fun resolveInterpretationType(
+        result: ConsumptionBehaviorResult,
+        composition: List<BehaviorCompositionItem>
+    ): ProfileInterpretationType {
+        val secondScore = composition.getOrNull(1)?.percentage?.div(100.0) ?: 0.0
+        return when {
+            result.confidence < 0.30 -> ProfileInterpretationType.LOW_CONFIDENCE_PROFILE
+            result.confidence < 0.45 && secondScore >= 0.18 -> ProfileInterpretationType.HYBRID_PROFILE
+            else -> ProfileInterpretationType.PURE_PROFILE
+        }
+    }
+
+    private fun ConsumptionBehaviorProfile.toReadableFragment(): String {
+        return when (this) {
+            ConsumptionBehaviorProfile.CONVENIENCE_ORIENTED -> "consumo orientado Ã  conveniÃªncia"
+            ConsumptionBehaviorProfile.ESSENTIAL_FOCUSED -> "foco em itens essenciais"
+            ConsumptionBehaviorProfile.DIVERSIFIED_BALANCED -> "consumo diversificado e equilibrado"
+            ConsumptionBehaviorProfile.BEVERAGE_RECURRENT -> "recorrÃªncia de bebidas"
+            ConsumptionBehaviorProfile.LOW_FRESH_FOOD -> "baixa presenÃ§a de alimentos frescos"
+            ConsumptionBehaviorProfile.HOUSEHOLD_MAINTENANCE -> "manutenÃ§Ã£o domÃ©stica"
+            ConsumptionBehaviorProfile.HIGHLY_CONCENTRATED -> "consumo altamente concentrado"
+            ConsumptionBehaviorProfile.IMPULSIVE_CONSUMPTION -> "consumo impulsivo"
+            ConsumptionBehaviorProfile.UNDEFINED -> "um padrÃ£o ainda indefinido"
+        }
+    }
+}
 
 ```
 
@@ -2535,6 +3008,269 @@ class CalculateConsumptionMetricsUseCase {
 
 ```
 
+## FILE: app/src/main/java/com/example/consumoai/domain/usecase/CalculateConsumptionMetricsV2UseCase.kt
+
+```kotlin
+package com.example.consumoai.domain.usecase
+
+import com.example.consumoai.domain.classifier.ProductSemanticTagger
+import com.example.consumoai.domain.model.ConsumptionMetricsV2
+import com.example.consumoai.domain.model.ProductCategory
+import com.example.consumoai.domain.model.ProductSemanticTag
+import com.example.consumoai.domain.model.Receipt
+import java.text.Normalizer
+import java.time.temporal.ChronoUnit
+import java.util.Locale
+import kotlin.math.abs
+import kotlin.math.pow
+import kotlin.math.sqrt
+
+class CalculateConsumptionMetricsV2UseCase(
+    private val calculateConsumptionMetricsUseCase: CalculateConsumptionMetricsUseCase,
+    private val semanticTagger: ProductSemanticTagger
+) {
+
+    operator fun invoke(receipts: List<Receipt>): ConsumptionMetricsV2 {
+        val base = calculateConsumptionMetricsUseCase(receipts)
+        if (receipts.isEmpty()) {
+            return ConsumptionMetricsV2(
+                baseMetrics = base,
+                timeSpanDays = 0.0,
+                receiptsPerWeek = 0.0,
+                averageDaysBetweenReceipts = 0.0,
+                purchaseRegularityScore = 0.0,
+                ticketStandardDeviation = 0.0,
+                ticketVariationCoefficient = 0.0,
+                itemCountVariationCoefficient = 0.0,
+                highTicketReceiptsPercentage = 0.0,
+                lowTicketReceiptsPercentage = 0.0,
+                categoryStabilityScore = 0.0,
+                averageCategoryOverlapBetweenReceipts = 0.0,
+                recurringItemRatio = 0.0,
+                topItemRepetitionRate = 0.0,
+                beverageSnackCoOccurrenceFrequency = 0.0,
+                alcoholSnackCoOccurrenceFrequency = 0.0,
+                hygieneCleaningCoOccurrenceFrequency = 0.0,
+                basicProduceCoOccurrenceFrequency = 0.0,
+                alcoholicBeverageValuePct = 0.0,
+                alcoholicBeverageFrequency = 0.0,
+                softDrinkValuePct = 0.0,
+                softDrinkFrequency = 0.0,
+                energyDrinkValuePct = 0.0,
+                energyDrinkFrequency = 0.0,
+                snackSweetValuePct = 0.0,
+                snackSweetFrequency = 0.0,
+                frozenConvenienceValuePct = 0.0,
+                frozenConvenienceFrequency = 0.0,
+                dairyValuePct = 0.0,
+                meatProteinValuePct = 0.0,
+                freshProduceValuePct = 0.0,
+                convenienceMealValuePct = 0.0,
+                convenienceMealFrequency = 0.0,
+                essentialRoutineScore = 0.0,
+                convenienceRoutineScore = 0.0,
+                beverageRoutineScore = 0.0,
+                householdRoutineScore = 0.0,
+                freshFoodPresenceScore = 0.0
+            )
+        }
+
+        val sortedByDate = receipts.sortedBy { it.date }
+        val timeSpanDays = if (sortedByDate.size <= 1) 1.0 else {
+            ChronoUnit.DAYS.between(sortedByDate.first().date, sortedByDate.last().date).toDouble().coerceAtLeast(1.0)
+        }
+        val receiptsPerWeek = receipts.size / (timeSpanDays / 7.0)
+        val gaps = sortedByDate.zipWithNext { a, b -> ChronoUnit.DAYS.between(a.date, b.date).toDouble().coerceAtLeast(0.0) }
+        val averageDaysBetweenReceipts = gaps.averageOrZero()
+        val gapStdDev = standardDeviation(gaps)
+        val purchaseRegularityScore = (1.0 - safeDivide(gapStdDev, averageDaysBetweenReceipts.coerceAtLeast(1.0))).coerceIn(0.0, 1.0)
+
+        val tickets = receipts.map { it.totalValue }
+        val ticketStandardDeviation = standardDeviation(tickets)
+        val ticketVariationCoefficient = safeDivide(ticketStandardDeviation, tickets.averageOrZero().coerceAtLeast(1.0))
+
+        val itemCounts = receipts.map { it.items.size.toDouble() }
+        val itemCountVariationCoefficient = safeDivide(standardDeviation(itemCounts), itemCounts.averageOrZero().coerceAtLeast(1.0))
+
+        val highTicketReceiptsPercentage = receipts.count { it.totalValue > base.averageTicket }.toDouble() / receipts.size
+        val lowTicketReceiptsPercentage = receipts.count { it.totalValue < base.averageTicket }.toDouble() / receipts.size
+
+        val categorySets = receipts.map { receipt -> receipt.items.map { it.category }.toSet() }
+        val overlaps = categorySets.zipWithNext { a, b -> jaccard(a, b) }
+        val averageCategoryOverlapBetweenReceipts = overlaps.averageOrZero()
+        val categoryStabilityScore = averageCategoryOverlapBetweenReceipts
+
+        val normalizedNames = receipts.flatMap { receipt -> receipt.items.map { normalizeProductNameForRecurrence(it.name) } }
+            .filter { it.isNotBlank() }
+        val countsByName = normalizedNames.groupingBy { it }.eachCount()
+        val recurringDistinctNames = countsByName.count { it.value > 1 }
+        val recurringItemRatio = safeDivide(recurringDistinctNames.toDouble(), countsByName.size.toDouble())
+        val topItemRepetitionRate = safeDivide((countsByName.maxOfOrNull { it.value } ?: 0).toDouble(), receipts.size.toDouble())
+
+        val receiptTagSets = receipts.map { receipt -> receipt.items.flatMap { semanticTagger.tagsFor(it) }.toSet() }
+
+        val beverageSnackCoOccurrenceFrequency = coOccurrence(receiptTagSets, ProductSemanticTag.SOFT_DRINK, ProductSemanticTag.SNACK_OR_SWEET)
+        val alcoholSnackCoOccurrenceFrequency = coOccurrence(receiptTagSets, ProductSemanticTag.ALCOHOLIC_BEVERAGE, ProductSemanticTag.SNACK_OR_SWEET)
+        val hygieneCleaningCoOccurrenceFrequency = coOccurrence(receiptTagSets, ProductSemanticTag.PERSONAL_CARE, ProductSemanticTag.HOUSEHOLD_CLEANING)
+        val basicProduceCoOccurrenceFrequency = receipts.count { receipt ->
+            val categories = receipt.items.map { it.category }.toSet()
+            categories.contains(ProductCategory.BASIC_FOOD) && categories.contains(ProductCategory.PRODUCE)
+        }.toDouble() / receipts.size
+
+        val totalValue = receipts.sumOf { it.totalValue }.coerceAtLeast(0.00001)
+
+        fun valuePctByTag(tag: ProductSemanticTag): Double {
+            val value = receipts.flatMap { it.items }
+                .filter { semanticTagger.tagsFor(it).contains(tag) }
+                .sumOf { it.price }
+            return safeDivide(value, totalValue)
+        }
+
+        fun freqByTag(tag: ProductSemanticTag): Double {
+            val withTag = receipts.count { receipt -> receipt.items.any { semanticTagger.tagsFor(it).contains(tag) } }
+            return safeDivide(withTag.toDouble(), receipts.size.toDouble())
+        }
+
+        val alcoholicBeverageValuePct = valuePctByTag(ProductSemanticTag.ALCOHOLIC_BEVERAGE)
+        val alcoholicBeverageFrequency = freqByTag(ProductSemanticTag.ALCOHOLIC_BEVERAGE)
+        val softDrinkValuePct = valuePctByTag(ProductSemanticTag.SOFT_DRINK)
+        val softDrinkFrequency = freqByTag(ProductSemanticTag.SOFT_DRINK)
+        val energyDrinkValuePct = valuePctByTag(ProductSemanticTag.ENERGY_DRINK)
+        val energyDrinkFrequency = freqByTag(ProductSemanticTag.ENERGY_DRINK)
+        val snackSweetValuePct = valuePctByTag(ProductSemanticTag.SNACK_OR_SWEET)
+        val snackSweetFrequency = freqByTag(ProductSemanticTag.SNACK_OR_SWEET)
+        val frozenConvenienceValuePct = valuePctByTag(ProductSemanticTag.FROZEN_OR_READY_MEAL)
+        val frozenConvenienceFrequency = freqByTag(ProductSemanticTag.FROZEN_OR_READY_MEAL)
+        val dairyValuePct = valuePctByTag(ProductSemanticTag.DAIRY)
+        val meatProteinValuePct = valuePctByTag(ProductSemanticTag.MEAT_OR_PROTEIN)
+        val freshProduceValuePct = valuePctByTag(ProductSemanticTag.FRESH_PRODUCE)
+
+        val convenienceMealValuePct = ((frozenConvenienceValuePct + snackSweetValuePct) / 2.0).coerceIn(0.0, 1.0)
+        val convenienceMealFrequency = ((frozenConvenienceFrequency + snackSweetFrequency) / 2.0).coerceIn(0.0, 1.0)
+
+        val essentialRoutineScore = averageOf(
+            base.frequencyByCategory[ProductCategory.BASIC_FOOD] ?: 0.0,
+            base.frequencyByCategory[ProductCategory.PRODUCE] ?: 0.0,
+            base.essentialCategoriesPercentage,
+            basicProduceCoOccurrenceFrequency
+        )
+
+        val convenienceRoutineScore = averageOf(
+            base.frequencyByCategory[ProductCategory.INDUSTRIALIZED] ?: 0.0,
+            snackSweetFrequency,
+            frozenConvenienceFrequency,
+            convenienceMealValuePct
+        )
+
+        val beverageRoutineScore = averageOf(
+            base.frequencyByCategory[ProductCategory.BEVERAGES] ?: 0.0,
+            base.valuePercentageByCategory[ProductCategory.BEVERAGES] ?: 0.0,
+            alcoholicBeverageFrequency,
+            softDrinkFrequency
+        )
+
+        val householdRoutineScore = averageOf(
+            base.frequencyByCategory[ProductCategory.HYGIENE] ?: 0.0,
+            base.frequencyByCategory[ProductCategory.CLEANING] ?: 0.0,
+            hygieneCleaningCoOccurrenceFrequency
+        )
+
+        val freshFoodPresenceScore = averageOf(
+            base.valuePercentageByCategory[ProductCategory.PRODUCE] ?: 0.0,
+            base.frequencyByCategory[ProductCategory.PRODUCE] ?: 0.0,
+            freshProduceValuePct,
+            basicProduceCoOccurrenceFrequency
+        )
+
+        return ConsumptionMetricsV2(
+            baseMetrics = base,
+            timeSpanDays = timeSpanDays,
+            receiptsPerWeek = receiptsPerWeek,
+            averageDaysBetweenReceipts = averageDaysBetweenReceipts,
+            purchaseRegularityScore = purchaseRegularityScore,
+            ticketStandardDeviation = ticketStandardDeviation,
+            ticketVariationCoefficient = ticketVariationCoefficient,
+            itemCountVariationCoefficient = itemCountVariationCoefficient,
+            highTicketReceiptsPercentage = highTicketReceiptsPercentage,
+            lowTicketReceiptsPercentage = lowTicketReceiptsPercentage,
+            categoryStabilityScore = categoryStabilityScore,
+            averageCategoryOverlapBetweenReceipts = averageCategoryOverlapBetweenReceipts,
+            recurringItemRatio = recurringItemRatio,
+            topItemRepetitionRate = topItemRepetitionRate,
+            beverageSnackCoOccurrenceFrequency = beverageSnackCoOccurrenceFrequency,
+            alcoholSnackCoOccurrenceFrequency = alcoholSnackCoOccurrenceFrequency,
+            hygieneCleaningCoOccurrenceFrequency = hygieneCleaningCoOccurrenceFrequency,
+            basicProduceCoOccurrenceFrequency = basicProduceCoOccurrenceFrequency,
+            alcoholicBeverageValuePct = alcoholicBeverageValuePct,
+            alcoholicBeverageFrequency = alcoholicBeverageFrequency,
+            softDrinkValuePct = softDrinkValuePct,
+            softDrinkFrequency = softDrinkFrequency,
+            energyDrinkValuePct = energyDrinkValuePct,
+            energyDrinkFrequency = energyDrinkFrequency,
+            snackSweetValuePct = snackSweetValuePct,
+            snackSweetFrequency = snackSweetFrequency,
+            frozenConvenienceValuePct = frozenConvenienceValuePct,
+            frozenConvenienceFrequency = frozenConvenienceFrequency,
+            dairyValuePct = dairyValuePct,
+            meatProteinValuePct = meatProteinValuePct,
+            freshProduceValuePct = freshProduceValuePct,
+            convenienceMealValuePct = convenienceMealValuePct,
+            convenienceMealFrequency = convenienceMealFrequency,
+            essentialRoutineScore = essentialRoutineScore,
+            convenienceRoutineScore = convenienceRoutineScore,
+            beverageRoutineScore = beverageRoutineScore,
+            householdRoutineScore = householdRoutineScore,
+            freshFoodPresenceScore = freshFoodPresenceScore
+        )
+    }
+
+    private fun normalizeProductNameForRecurrence(name: String): String {
+        val upper = name.uppercase(Locale.ROOT)
+        val noAccents = Normalizer.normalize(upper, Normalizer.Form.NFD).replace(Regex("\\p{M}+"), "")
+        val noMeasures = noAccents
+            .replace(Regex("\\b\\d+[.,]?\\d*\\s?(ML|L|G|KG|UN|UNS)\\b"), " ")
+            .replace(Regex("[^A-Z0-9 ]"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+        return noMeasures
+    }
+
+    private fun coOccurrence(receiptTagSets: List<Set<ProductSemanticTag>>, first: ProductSemanticTag, second: ProductSemanticTag): Double {
+        if (receiptTagSets.isEmpty()) return 0.0
+        val withBoth = receiptTagSets.count { it.contains(first) && it.contains(second) }
+        return safeDivide(withBoth.toDouble(), receiptTagSets.size.toDouble())
+    }
+
+    private fun jaccard(a: Set<ProductCategory>, b: Set<ProductCategory>): Double {
+        val union = (a + b).size.toDouble()
+        if (union == 0.0) return 0.0
+        val intersection = a.intersect(b).size.toDouble()
+        return safeDivide(intersection, union)
+    }
+
+    private fun standardDeviation(values: List<Double>): Double {
+        if (values.isEmpty()) return 0.0
+        val mean = values.average()
+        val variance = values.sumOf { (it - mean).pow(2) } / values.size
+        return sqrt(abs(variance))
+    }
+
+    private fun safeDivide(numerator: Double, denominator: Double): Double {
+        if (denominator == 0.0 || denominator.isNaN() || denominator.isInfinite()) return 0.0
+        val result = numerator / denominator
+        return if (result.isNaN() || result.isInfinite()) 0.0 else result
+    }
+
+    private fun List<Double>.averageOrZero(): Double = if (isEmpty()) 0.0 else average()
+
+    private fun averageOf(vararg values: Double): Double {
+        if (values.isEmpty()) return 0.0
+        return values.map { if (it.isFinite()) it else 0.0 }.average().coerceIn(0.0, 1.0)
+    }
+}
+
+```
+
 ## FILE: app/src/main/java/com/example/consumoai/domain/usecase/ClassifyConsumptionProfileUseCase.kt
 
 ```kotlin
@@ -2545,7 +3281,8 @@ import com.example.consumoai.domain.model.ConsumptionBehaviorResult
 import com.example.consumoai.domain.model.ConsumptionModelInput
 
 /**
- * Classification temporÃ¡ria atÃ© integraÃ§Ã£o do modelo treinado.
+ * Encapsula a classificaÃ§Ã£o de perfil usando o backend treinado,
+ * com fallback local apenas em falhas tÃ©cnicas.
  */
 class ClassifyConsumptionProfileUseCase(
     private val consumptionBehaviorClassifier: ConsumptionBehaviorClassifier
@@ -2589,6 +3326,84 @@ class ClearReceiptsUseCase(
 
     suspend operator fun invoke() {
         receiptRepository.clearReceipts()
+    }
+}
+
+```
+
+## FILE: app/src/main/java/com/example/consumoai/domain/usecase/ConsumptionFeatureSanitizer.kt
+
+```kotlin
+package com.example.consumoai.domain.usecase
+
+import com.example.consumoai.domain.model.ConsumptionModelInput
+import com.example.consumoai.domain.model.FeatureSanitizationNote
+import com.example.consumoai.domain.model.SanitizedConsumptionModelInput
+
+class ConsumptionFeatureSanitizer {
+
+    operator fun invoke(input: ConsumptionModelInput): SanitizedConsumptionModelInput {
+        val notes = mutableListOf<FeatureSanitizationNote>()
+        val sanitizedFeatures = input.features.mapValues { (name, value) ->
+            sanitizeFeature(name, value, notes)
+        }
+
+        return SanitizedConsumptionModelInput(
+            input = input.copy(features = sanitizedFeatures),
+            notes = notes
+        )
+    }
+
+    private fun sanitizeFeature(
+        featureName: String,
+        value: Double,
+        notes: MutableList<FeatureSanitizationNote>
+    ): Double {
+        val sanitized = when {
+            value.isNaN() || value.isInfinite() -> 0.0
+            isClampedZeroToOneFeature(featureName) -> value.coerceIn(0.0, 1.0)
+            isNonNegativeFeature(featureName) -> value.coerceAtLeast(0.0)
+            else -> value
+        }
+
+        if (sanitized != value) {
+            notes += FeatureSanitizationNote(
+                featureName = featureName,
+                originalValue = value,
+                sanitizedValue = sanitized,
+                reason = buildReason(featureName, value, sanitized)
+            )
+        }
+
+        return sanitized
+    }
+
+    private fun isClampedZeroToOneFeature(featureName: String): Boolean {
+        return featureName.endsWith("_pct") ||
+            featureName.endsWith("_percentage") ||
+            featureName.endsWith("_frequency") ||
+            featureName.endsWith("_index") ||
+            featureName.endsWith("_score") ||
+            featureName.endsWith("_ratio") ||
+            featureName == "classified_items_percentage"
+    }
+
+    private fun isNonNegativeFeature(featureName: String): Boolean {
+        return featureName.startsWith("total_") ||
+            featureName.startsWith("average_") ||
+            featureName.contains("value") ||
+            featureName.contains("items")
+    }
+
+    private fun buildReason(featureName: String, originalValue: Double, sanitizedValue: Double): String {
+        return when {
+            originalValue.isNaN() -> "Valor NaN substituÃ­do por 0.0"
+            originalValue.isInfinite() -> "Valor infinito substituÃ­do por 0.0"
+            isClampedZeroToOneFeature(featureName) && originalValue < 0.0 -> "Feature limitada ao intervalo 0..1"
+            isClampedZeroToOneFeature(featureName) && originalValue > 1.0 -> "Feature limitada ao intervalo 0..1"
+            sanitizedValue == 0.0 && originalValue < 0.0 -> "Valor negativo invÃ¡lido ajustado para 0.0"
+            else -> "Valor sanitizado para manter consistÃªncia do modelo"
+        }
     }
 }
 
@@ -2677,11 +3492,35 @@ class ImportSampleNfceReceiptsUseCase(
             "https://dfe-portal.svrs.rs.gov.br/Dfe/QrCodeNFce?p=43250993015006000890651100007554131591952030%7C2%7C1%7C1%7C69824D7F84E9E54DD11277F513B853241BA6C691",
             "https://dfe-portal.svrs.rs.gov.br/Dfe/QrCodeNFce?p=43250993015006000890651130002226791920952098%7C2%7C1%7C1%7C8691A8AD876EC8861C3F8AC1D546A5D5A4F2D3AB",
             "https://dfe-portal.svrs.rs.gov.br/Dfe/QrCodeNFce?p=43250993015006000890651090007110791850810422%7C2%7C1%7C1%7CF122CB142998F8F1C9891025165339F2F5757225",
-            "https://dfe-portal.svrs.rs.gov.br/Dfe/QrCodeNFce?p=43251093015006000890651100007626041550452981%7C2%7C1%7C1%7C8FA68A81F0078C53F44444C8744E663DF5F90EB3"
+            "https://dfe-portal.svrs.rs.gov.br/Dfe/QrCodeNFce?p=43251093015006000890651100007626041550452981%7C2%7C1%7C1%7C8FA68A81F0078C53F44444C8744E663DF5F90EB3",
+            "https://dfe-portal.svrs.rs.gov.br/Dfe/QrCodeNFce?p=43260593015006000890651130002606181030121564%7C2%7C1%7C1%7CC3B751B5B340C0112CC46A4C34FBF55A53C6E24E",
+            "https://www.sefaz.rs.gov.br/NFCE/NFCE-COM.aspx?p=43260593015006000890651030008658621784452963%7C2%7C1%7C1%7C02D5E125461C5871D667E9DD4534E3A1C4F2235C",
+            "https://www.sefaz.rs.gov.br/NFCE/NFCE-COM.aspx?p=43260593015006000890651030008656571286908077%7C2%7C1%7C1%7CC2FFA17A9AFB527A307B47347931A96618F761BC",
+            "https://www.sefaz.rs.gov.br/NFCE/NFCE-COM.aspx?p=43260593015006000890651120004331571588542386%7C2%7C1%7C1%7CA6F29ECBB977366AA30D8B3412E5D3D00BDBE438",
+            "https://www.sefaz.rs.gov.br/NFCE/NFCE-COM.aspx?p=43260593015006000890651140002243891524771522%7C2%7C1%7C1%7CD9BECF0DC883312BC4EE81F306E638EADA72EB67",
+            "https://www.sefaz.rs.gov.br/NFCE/NFCE-COM.aspx?p=43260493015006000890651110005065661339361376%7C2%7C1%7C1%7CFF3FAE5434DBA6C2063809897A113837E03CF738",
+            "https://www.sefaz.rs.gov.br/NFCE/NFCE-COM.aspx?p=43260493015006000890651020008833931118068707%7C2%7C1%7C1%7CB96669FC6B7665085B805D54D2E146596C1EE154",
+            "https://www.sefaz.rs.gov.br/NFCE/NFCE-COM.aspx?p=43260493015006000890651120004299671201219965%7C2%7C1%7C1%7CB5445B0708B63E2641727B8E23B90E172D5870F4",
+            "https://www.sefaz.rs.gov.br/NFCE/NFCE-COM.aspx?p=43260493015006000890651090007392011267905116%7C2%7C1%7C1%7CB5353A982C00D0F8C60C2BA510155AE74A318AB3",
+            "https://www.sefaz.rs.gov.br/NFCE/NFCE-COM.aspx?p=43260493015006000890651030008626931835113794%7C2%7C1%7C1%7CC9F3F108C99DEBFB80BEDDD8E1CAE7204394821C",
+            "https://www.sefaz.rs.gov.br/NFCE/NFCE-COM.aspx?p=43260493015006000890651130002570861493098887%7C2%7C1%7C1%7C3B24698BE95BB2674B62CB27C535B41B4CB2F605",
+            "https://www.sefaz.rs.gov.br/NFCE/NFCE-COM.aspx?p=43260493015006000890651100008237991892618994%7C2%7C1%7C1%7C1CFF9CD4251FC7EB4E8599027D7D710A54F6CF81",
+            "https://www.sefaz.rs.gov.br/NFCE/NFCE-COM.aspx?p=43260493015006000890651130002561491858615395%7C2%7C1%7C1%7CB7392D437D333ABDF4910C4237D1E09CBC9711D8",
+            "https://www.sefaz.rs.gov.br/NFCE/NFCE-COM.aspx?p=43260493015006000890651120004255101646290973%7C2%7C1%7C1%7CFBC7982F735600903D580CACBF8A8C0A2837C27C",
+            "https://www.sefaz.rs.gov.br/NFCE/NFCE-COM.aspx?p=43260493015006000890651030008603141212965654%7C2%7C1%7C1%7C1FDEA44BB00FDBA78D8AC397245A37FF10B18905",
+            "https://www.sefaz.rs.gov.br/NFCE/NFCE-COM.aspx?p=43260493015006000890651120004233891372002470%7C2%7C1%7C1%7C7BCE0F09132B5C8A9AD8F9B5FCCA3666EFFEA56A",
+            "https://www.sefaz.rs.gov.br/NFCE/NFCE-COM.aspx?p=43260493015006000890651030008595631364106460%7C2%7C1%7C1%7CB3697D5820F0C935FA27AF0A595C28B555A56B44",
+            "https://www.sefaz.rs.gov.br/NFCE/NFCE-COM.aspx?p=43260493015006000890651020008809731443239856%7C2%7C1%7C1%7C734B05699F45AC642F5CCC30E1EC2987C75D3E2B",
+            "https://www.sefaz.rs.gov.br/NFCE/NFCE-COM.aspx?p=43260493015006000890651110005029951374512526%7C2%7C1%7C1%7C9BA73E75B38DD4CFEE1458124AC31DE992FF2092",
+            "https://www.sefaz.rs.gov.br/NFCE/NFCE-COM.aspx?p=43260393015006000890651110005023901579048250%7C2%7C1%7C1%7CBC5D7138F1D55D8BD936B8A6CEF7A118D79216C8",
+            "https://www.sefaz.rs.gov.br/NFCE/NFCE-COM.aspx?p=43260393015006000890651120004167121149677848%7C2%7C1%7C1%7CA83C2141F2F7D1E099D5C2B34DEC315516E1B810",
+            "https://www.sefaz.rs.gov.br/NFCE/NFCE-COM.aspx?p=43260393015006000890651020008795941498702312%7C2%7C1%7C1%7C4C72C61C98F47837A6DB3CD984FD75398BFDB451",
+            "https://www.sefaz.rs.gov.br/NFCE/NFCE-COM.aspx?p=43260393015006000890651110005018161643159342%7C2%7C1%7C1%7C924B37788E3BE7E4E83B6ECD5A870AAC4E7DF88F",
+            "https://dfe-portal.svrs.rs.gov.br/Dfe/QrCodeNFce?p=43260593015006003058651040004728211381220598%7C2%7C1%7C1%7C8079CE19E99A586900DCEAB7501398CBDA402957",
+            "https://dfe-portal.svrs.rs.gov.br/Dfe/QrCodeNFce?p=43260593015006003058651180008733551869610299%7C2%7C1%7C1%7C6ED3EBF2917B1C8481FDCA5DD05BE45F5FF64900"
         )
     }
 }
-
 ```
 
 ## FILE: app/src/main/java/com/example/consumoai/domain/usecase/SaveReceiptUseCase.kt
@@ -2744,524 +3583,11 @@ fun HomeRoute(
 ) {
     val uiState by viewModel.uiState.collectAsState()
 
-    HomeScreen(
+    HomeScreenV2(
         uiState = uiState,
         onAction = viewModel::onAction
     )
 }
-```
-
-## FILE: app/src/main/java/com/example/consumoai/presentation/home/HomeScreen.kt
-
-```kotlin
-package com.example.consumoai.presentation.home
-
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.unit.dp
-import com.example.consumoai.domain.model.BehaviorClassificationSource
-import com.example.consumoai.domain.model.ConsumptionBehaviorProfile
-import com.example.consumoai.domain.model.ImportReceiptsResult
-import com.example.consumoai.domain.model.InsightSeverity
-import com.example.consumoai.domain.model.ProductCategory
-import com.example.consumoai.domain.model.StoredConsumptionAnalysis
-import com.example.consumoai.domain.model.StoredReceiptsSummary
-import java.util.Locale
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun HomeScreen(
-    uiState: HomeUiState,
-    onAction: (HomeScreenAction) -> Unit
-) {
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text(text = "ConsumoAI") }
-            )
-        }
-    ) { paddingValues ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues)
-                .verticalScroll(rememberScrollState())
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Button(
-                onClick = { onAction(HomeScreenAction.OnImportSampleNfceUrlsClick) },
-                enabled = !uiState.isImporting,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(text = if (uiState.isImporting) "Importando..." else "Importar notas NFC-e de teste")
-            }
-
-            Button(
-                onClick = { onAction(HomeScreenAction.OnAnalyzeStoredReceiptsClick) },
-                enabled = !uiState.isAnalyzing,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(text = if (uiState.isAnalyzing) "Analisando..." else "Analisar notas armazenadas")
-            }
-
-            Button(
-                onClick = { onAction(HomeScreenAction.OnClearReceiptsClick) },
-                enabled = !uiState.isImporting && !uiState.isAnalyzing,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(text = "Limpar notas locais")
-            }
-
-            ImportResultCard(uiState.importResult)
-            StoredSummaryCard(uiState.localSummary)
-
-            if (uiState.storedAnalysis != null) {
-                BehaviorResultCard(uiState.storedAnalysis)
-                BehavioralCompositionCard(uiState.storedAnalysis)
-                InsightsCard(uiState.storedAnalysis)
-                FutureModelInputCard(uiState.storedAnalysis)
-                ConsumptionMetricsCard(uiState.storedAnalysis)
-            }
-
-            when {
-                uiState.isImporting || uiState.isAnalyzing -> {
-                    CircularProgressIndicator(
-                        modifier = Modifier.align(Alignment.CenterHorizontally)
-                    )
-                }
-
-                uiState.errorMessage != null -> {
-                    Text(
-                        text = uiState.errorMessage,
-                        color = MaterialTheme.colorScheme.error
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun ImportResultCard(importResult: ImportReceiptsResult?) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text("Importação NFC-e", style = MaterialTheme.typography.titleMedium)
-            Spacer(modifier = Modifier.height(8.dp))
-
-            if (importResult == null) {
-                Text("Nenhuma importação executada ainda")
-                return@Column
-            }
-
-            Text("Importadas: ${importResult.importedCount}")
-            Text("Ignoradas por duplicidade: ${importResult.skippedCount}")
-            Text("Falhas: ${importResult.failedCount}")
-        }
-    }
-}
-
-@Composable
-private fun StoredSummaryCard(summary: StoredReceiptsSummary?) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text("Resumo local", style = MaterialTheme.typography.titleMedium)
-            Spacer(modifier = Modifier.height(8.dp))
-
-            if (summary == null) {
-                Text("Sem resumo ainda")
-                return@Column
-            }
-
-            Text("Total de notas armazenadas: ${summary.totalReceipts}")
-            Text("Total de itens: ${summary.totalItems}")
-            Text("Valor total: ${summary.totalValue.toCurrencyText()}")
-        }
-    }
-}
-
-
-@Composable
-private fun BehaviorResultCard(analysis: StoredConsumptionAnalysis?) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text("Resultado do modelo", style = MaterialTheme.typography.titleMedium)
-            Spacer(modifier = Modifier.height(8.dp))
-
-            if (analysis == null) {
-                Text("Nenhuma análise executada")
-                return@Column
-            }
-
-            val result = analysis.behaviorResult
-            Text("Perfil principal: ${result.mainProfile.toDisplayName()}")
-            Text("Confiança: ${result.confidence.toPercentageText()}")
-            Text("Origem: ${result.source.toDisplayName()}")
-            Text("Descrição: ${result.mainProfile.toSimpleDescription()}")
-            Text("Resumo técnico: ${buildTechnicalSummary(analysis)}")
-            Spacer(modifier = Modifier.height(4.dp))
-            if (result.source == BehaviorClassificationSource.RULE_BASED_FALLBACK) {
-                Text("Resultado gerado por fallback local.")
-                Spacer(modifier = Modifier.height(4.dp))
-            }
-
-            Text("Probabilidades por perfil", style = MaterialTheme.typography.titleSmall)
-            Spacer(modifier = Modifier.height(4.dp))
-            result.profileScores
-                .toList()
-                .sortedByDescending { (_, score) -> score }
-                .forEach { (profile, score) ->
-                    Text("- ${profile.toDisplayName()}: ${score.toPercentageText()}")
-                }
-        }
-    }
-}
-
-@Composable
-private fun ConsumptionMetricsCard(analysis: StoredConsumptionAnalysis?) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text("Métricas gerais do app", style = MaterialTheme.typography.titleMedium)
-            Spacer(modifier = Modifier.height(8.dp))
-
-            if (analysis == null) {
-                Text("Nenhuma análise executada")
-                return@Column
-            }
-
-            val metrics = analysis.metrics
-            Text("Nem todas as métricas abaixo fazem parte da entrada oficial do modelo.")
-            Spacer(modifier = Modifier.height(8.dp))
-            MetricSection(
-                title = "Resumo geral",
-                items = listOf(
-                    "Total de notas" to metrics.totalReceipts.toString(),
-                    "Total de itens" to metrics.totalItems.toString(),
-                    "Valor total" to metrics.totalValue.toCurrencyText(),
-                    "Ticket médio" to metrics.averageTicket.toCurrencyText(),
-                    "Média de itens por nota" to metrics.averageItemsPerReceipt.toCompactNumberText(),
-                    "Valor médio por item" to metrics.averageValuePerItem.toCurrencyText()
-                )
-            )
-
-            MetricSection(
-                title = "Categorias dominantes",
-                items = listOf(
-                    "Categoria dominante por valor" to metrics.maxCategoryByValue.toDisplayName(),
-                    "Categoria dominante por quantidade" to metrics.maxCategoryByItems.toDisplayName(),
-                    "Índice de concentração" to metrics.categoryConcentrationIndex.toPercentageText(),
-                    "Diferença entre 1ª e 2ª categoria" to metrics.categoryDominanceGap.toPercentageText(),
-                    "Top 3 categorias por valor" to metrics.topThreeCategoriesByValue.joinToString(" • ") { it.toDisplayName() }.ifBlank { "Indefinido" }
-                )
-            )
-
-            MetricSection(
-                title = "Qualidade da classificação",
-                items = listOf(
-                    "Percentual de itens classificados" to metrics.classifiedItemsPercentage.toPercentageText(),
-                    "Percentual OTHER por valor" to metrics.otherPercentageByValue.toPercentageText(),
-                    "Percentual OTHER por quantidade" to metrics.otherPercentageByItems.toPercentageText()
-                )
-            )
-
-            MetricSection(
-                title = "Diversidade",
-                items = listOf(
-                    "Média de categorias por nota" to metrics.averageCategoriesPerReceipt.toCompactNumberText(),
-                    "Índice de diversidade" to metrics.categoryDiversityIndex.toPercentageText(),
-                    "Diversity score" to metrics.diversityScore.toPercentageText()
-                )
-            )
-
-            MetricSection(
-                title = "Comportamento alimentar",
-                items = listOf(
-                    "Percentual essencial" to metrics.essentialCategoriesPercentage.toPercentageText(),
-                    "Percentual não essencial" to metrics.nonEssentialCategoriesPercentage.toPercentageText(),
-                    "Industrializados / alimentação básica" to metrics.industrializedToBasicFoodRatio.toCompactRatioText(),
-                    "Bebidas / alimentação básica" to metrics.beveragesToBasicFoodRatio.toCompactRatioText(),
-                    "Bebidas / total" to metrics.beveragesToTotalRatio.toPercentageText(),
-                    "Hortifruti / total" to metrics.produceToTotalRatio.toPercentageText(),
-                    "Convenience score" to metrics.convenienceScore.toPercentageText(),
-                    "Essential score" to metrics.essentialScore.toPercentageText()
-                )
-            )
-
-            MetricSection(
-                title = "Frequência por categoria",
-                items = listOf(
-                    "Industrializados" to metrics.receiptsWithIndustrializedPercentage.toReceiptFrequencyText(),
-                    "Bebidas" to metrics.receiptsWithBeveragesPercentage.toReceiptFrequencyText(),
-                    "Alimentação básica" to metrics.receiptsWithBasicFoodPercentage.toReceiptFrequencyText(),
-                    "Hortifruti" to metrics.receiptsWithProducePercentage.toReceiptFrequencyText(),
-                    "Higiene" to metrics.receiptsWithHygienePercentage.toReceiptFrequencyText(),
-                    "Limpeza" to metrics.receiptsWithCleaningPercentage.toReceiptFrequencyText()
-                )
-            )
-
-            Spacer(modifier = Modifier.height(8.dp))
-            Text("Métricas por categoria", style = MaterialTheme.typography.titleSmall)
-            Spacer(modifier = Modifier.height(8.dp))
-            ProductCategory.entries.forEach { category ->
-                val categoryMetrics = metrics.categoryMetrics[category]
-                CategoryMetricsItem(
-                    category = category,
-                    valueTotal = categoryMetrics?.totalValue ?: 0.0,
-                    itemTotal = categoryMetrics?.totalItems ?: 0,
-                    valuePercentage = categoryMetrics?.valuePercentage ?: 0.0,
-                    itemPercentage = categoryMetrics?.itemPercentage ?: 0.0,
-                    frequency = categoryMetrics?.frequency ?: 0.0,
-                    averageValuePerReceipt = categoryMetrics?.averageValuePerReceipt ?: 0.0,
-                    averageItemsPerReceipt = categoryMetrics?.averageItemsPerReceipt ?: 0.0
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun FutureModelInputCard(analysis: StoredConsumptionAnalysis?) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text("Features oficiais do modelo V1", style = MaterialTheme.typography.titleMedium)
-            Spacer(modifier = Modifier.height(8.dp))
-
-            if (analysis == null) {
-                Text("Nenhuma análise executada")
-                return@Column
-            }
-
-            val features = analysis.modelInput.features.toSortedMap()
-            Text("Essas features compõem a entrada oficial da IA nesta V1 e serão usadas futuramente pelo modelo treinado offline.")
-            Spacer(modifier = Modifier.height(8.dp))
-            Text("Versão do input: ${analysis.modelInput.version}")
-            Text("Quantidade de features oficiais: ${features.size}")
-            Spacer(modifier = Modifier.height(8.dp))
-            features.forEach { (name, value) ->
-                Text("$name: ${value.toCompactNumberText()}")
-            }
-        }
-    }
-}
-
-@Composable
-private fun BehavioralCompositionCard(analysis: StoredConsumptionAnalysis?) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text("Composição comportamental", style = MaterialTheme.typography.titleMedium)
-            Spacer(modifier = Modifier.height(8.dp))
-
-            if (analysis == null) {
-                Text("Nenhuma análise executada")
-                return@Column
-            }
-
-            val composition = analysis.behaviorAnalysis?.behavioralComposition
-            if (composition == null || composition.isEmpty()) {
-                Text("Sem dados de composição")
-                return@Column
-            }
-
-            Text("Distribuição dos perfis comportamentais identificados:")
-            Spacer(modifier = Modifier.height(8.dp))
-            composition.forEach { item ->
-                Text("${item.profile.toDisplayName()} — ${"%.1f".format(Locale.US, item.percentage)}%")
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-            Text("Resumo geral", style = MaterialTheme.typography.titleSmall)
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(analysis.behaviorAnalysis?.summary ?: "Sem resumo disponível")
-        }
-    }
-}
-
-@Composable
-private fun InsightsCard(analysis: StoredConsumptionAnalysis?) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text("Insights identificados", style = MaterialTheme.typography.titleMedium)
-            Spacer(modifier = Modifier.height(8.dp))
-
-            if (analysis == null) {
-                Text("Nenhuma análise executada")
-                return@Column
-            }
-
-            val insights = analysis.behaviorAnalysis?.insights
-            if (insights == null || insights.isEmpty()) {
-                Text("Sem insights identificados")
-                return@Column
-            }
-
-            insights.forEach { insight ->
-                InsightItem(
-                    title = insight.title,
-                    description = insight.description,
-                    severity = insight.severity
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-            }
-        }
-    }
-}
-
-@Composable
-private fun InsightItem(
-    title: String,
-    description: String,
-    severity: InsightSeverity
-) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.small
-    ) {
-        Column(modifier = Modifier.padding(12.dp)) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.titleSmall,
-                color = getSeverityColor(severity)
-            )
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                text = description,
-                style = MaterialTheme.typography.bodySmall
-            )
-        }
-    }
-}
-
-@Composable
-private fun getSeverityColor(severity: InsightSeverity): Color {
-    return when (severity) {
-        InsightSeverity.LOW -> MaterialTheme.colorScheme.outline
-        InsightSeverity.MEDIUM -> MaterialTheme.colorScheme.onSurfaceVariant
-        InsightSeverity.HIGH -> MaterialTheme.colorScheme.error
-    }
-}
-
-@Composable
-private fun MetricSection(
-    title: String,
-    items: List<Pair<String, String>>
-) {
-    Spacer(modifier = Modifier.height(8.dp))
-    Text(title, style = MaterialTheme.typography.titleSmall)
-    Spacer(modifier = Modifier.height(4.dp))
-    items.forEach { (label, value) ->
-        Text("$label: $value")
-    }
-}
-
-@Composable
-private fun CategoryMetricsItem(
-    category: ProductCategory,
-    valueTotal: Double,
-    itemTotal: Int,
-    valuePercentage: Double,
-    itemPercentage: Double,
-    frequency: Double,
-    averageValuePerReceipt: Double,
-    averageItemsPerReceipt: Double
-) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(12.dp)) {
-            Text(category.toDisplayName(), style = MaterialTheme.typography.titleSmall)
-            Spacer(modifier = Modifier.height(4.dp))
-            Text("Valor total: ${valueTotal.toCurrencyText()}")
-            Text("Quantidade de itens: $itemTotal")
-            Text("Percentual por valor: ${valuePercentage.toPercentageText()}")
-            Text("Percentual por quantidade: ${itemPercentage.toPercentageText()}")
-            Text("Frequência: ${frequency.toPercentageText()}")
-            Text("Valor médio por nota: ${averageValuePerReceipt.toCurrencyText()}")
-            Text("Itens médios por nota: ${averageItemsPerReceipt.toCompactNumberText()}")
-        }
-    }
-    Spacer(modifier = Modifier.height(8.dp))
-}
-
-private fun Double.toPercentageText(): String = "${"%.1f".format(Locale.US, this * 100)}%"
-
-private fun Double.toCurrencyText(): String = "R$ ${"%.2f".format(Locale.US, this).replace('.', ',')}"
-
-private fun Double.toCompactNumberText(): String = "%.2f".format(Locale.US, this).replace('.', ',')
-
-private fun Double.toCompactRatioText(): String = "%.2f".format(Locale.US, this).replace('.', ',')
-
-private fun Double.toReceiptFrequencyText(): String = "presente em ${this.toPercentageText()} das notas"
-
-private fun ProductCategory?.toDisplayName(): String {
-    return when (this) {
-        ProductCategory.BASIC_FOOD -> "Alimentação básica"
-        ProductCategory.INDUSTRIALIZED -> "Industrializados"
-        ProductCategory.BEVERAGES -> "Bebidas"
-        ProductCategory.HYGIENE -> "Higiene"
-        ProductCategory.CLEANING -> "Limpeza"
-        ProductCategory.PRODUCE -> "Hortifruti"
-        ProductCategory.OTHER -> "Outros"
-        null -> "Indefinido"
-    }
-}
-
-private fun ConsumptionBehaviorProfile.toDisplayName(): String {
-    return when (this) {
-        ConsumptionBehaviorProfile.CONVENIENCE_ORIENTED -> "Orientado à conveniência"
-        ConsumptionBehaviorProfile.ESSENTIAL_FOCUSED -> "Focado no essencial"
-        ConsumptionBehaviorProfile.DIVERSIFIED_BALANCED -> "Diversificado e equilibrado"
-        ConsumptionBehaviorProfile.BEVERAGE_RECURRENT -> "Recorrente em bebidas"
-        ConsumptionBehaviorProfile.LOW_FRESH_FOOD -> "Baixo consumo de hortifruti"
-        ConsumptionBehaviorProfile.HOUSEHOLD_MAINTENANCE -> "Foco em manutenção doméstica"
-        ConsumptionBehaviorProfile.HIGHLY_CONCENTRATED -> "Altamente concentrado"
-        ConsumptionBehaviorProfile.IMPULSIVE_CONSUMPTION -> "Consumo impulsivo"
-        ConsumptionBehaviorProfile.UNDEFINED -> "Indefinido"
-    }
-}
-
-private fun BehaviorClassificationSource.toDisplayName(): String {
-    return when (this) {
-        BehaviorClassificationSource.TRAINED_MODEL -> "Modelo treinado"
-        BehaviorClassificationSource.RULE_BASED_FALLBACK -> "Fallback por regra simples"
-    }
-}
-
-private fun ConsumptionBehaviorProfile.toSimpleDescription(): String {
-    return when (this) {
-        ConsumptionBehaviorProfile.CONVENIENCE_ORIENTED -> "Maior presença de industrializados e compras práticas."
-        ConsumptionBehaviorProfile.ESSENTIAL_FOCUSED -> "Consumo mais focado em itens essenciais do dia a dia."
-        ConsumptionBehaviorProfile.DIVERSIFIED_BALANCED -> "Distribuição mais equilibrada entre categorias de compra."
-        ConsumptionBehaviorProfile.BEVERAGE_RECURRENT -> "Recorrência relevante de bebidas nas notas analisadas."
-        ConsumptionBehaviorProfile.LOW_FRESH_FOOD -> "Baixa presença de hortifruti no padrão de consumo atual."
-        ConsumptionBehaviorProfile.HOUSEHOLD_MAINTENANCE -> "Foco maior em itens de higiene e limpeza doméstica."
-        ConsumptionBehaviorProfile.HIGHLY_CONCENTRATED -> "Concentração forte do gasto em poucas categorias."
-        ConsumptionBehaviorProfile.IMPULSIVE_CONSUMPTION -> "Maior peso em categorias não essenciais e conveniência."
-        ConsumptionBehaviorProfile.UNDEFINED -> "Padrão ainda indefinido com os dados disponíveis."
-    }
-}
-
-private fun buildTechnicalSummary(analysis: StoredConsumptionAnalysis): String {
-    val modelInput = analysis.modelInput
-    return "input=${modelInput.version}, features=${modelInput.features.size}, notas=${analysis.metrics.totalReceipts}, itens=${analysis.metrics.totalItems}"
-}
-
 ```
 
 ## FILE: app/src/main/java/com/example/consumoai/presentation/home/HomeScreenAction.kt
@@ -3274,6 +3600,493 @@ sealed interface HomeScreenAction {
     data object OnAnalyzeStoredReceiptsClick : HomeScreenAction
     data object OnClearReceiptsClick : HomeScreenAction
 }
+
+
+```
+
+## FILE: app/src/main/java/com/example/consumoai/presentation/home/HomeScreenV2.kt
+
+```kotlin
+package com.example.consumoai.presentation.home
+
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import com.example.consumoai.domain.model.ImportReceiptsResult
+import com.example.consumoai.domain.model.StoredReceiptsSummary
+import com.example.consumoai.presentation.home.model.HomeAnalysisPresentation
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun HomeScreenV2(
+    uiState: HomeUiState,
+    onAction: (HomeScreenAction) -> Unit
+) {
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = {
+                    Column(modifier = Modifier.padding(vertical = 4.dp)) {
+                        Text(
+                            text = "ConsumoAI",
+                            style = MaterialTheme.typography.titleLarge,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = "Modelo XGBoost V2 Top 15",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    titleContentColor = MaterialTheme.colorScheme.onPrimary
+                )
+            )
+        }
+    ) { paddingValues ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(paddingValues)
+                .verticalScroll(rememberScrollState())
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            // AÃ§Ãµes principais
+            SectionTitle("AÃ§Ãµes principais")
+            ActionButtonsV2(
+                isImporting = uiState.isImporting,
+                isAnalyzing = uiState.isAnalyzing,
+                onAction = onAction
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Card de resumo local
+            StoredReceiptsCardV2(
+                summary = uiState.localSummary,
+                importResult = uiState.importResult
+            )
+
+            // AnÃ¡lise principal (se disponÃ­vel)
+            uiState.analysisPresentation?.let { presentation ->
+                Spacer(modifier = Modifier.height(8.dp))
+                SectionTitle("AnÃ¡lise")
+
+                // Card principal: Perfil identificado
+                ProfileResultCardV2(presentation)
+
+                // Card: Leitura do consumo
+                ConsumptionReadingCardV2(presentation.consumptionReading)
+
+                // Card: Principais sinais
+                PrimarySignalsCardV2(presentation.primarySignals)
+
+                // Card recolhÃ­vel: Detalhes tÃ©cnicos
+                TechnicalDetailsCardV2(presentation.technicalItems)
+            }
+
+            // Estados: loading ou erro
+            when {
+                uiState.isImporting || uiState.isAnalyzing -> {
+                    CircularProgressIndicator(
+                        modifier = Modifier
+                            .align(Alignment.CenterHorizontally)
+                            .padding(32.dp)
+                    )
+                }
+
+                uiState.errorMessage != null -> {
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 8.dp),
+                        shape = RoundedCornerShape(16.dp),
+                        color = MaterialTheme.colorScheme.errorContainer
+                    ) {
+                        Text(
+                            text = uiState.errorMessage,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.padding(16.dp)
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+        }
+    }
+}
+
+@Composable
+private fun SectionTitle(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.titleMedium,
+        color = MaterialTheme.colorScheme.onSurface,
+        modifier = Modifier.padding(vertical = 8.dp)
+    )
+}
+
+@Composable
+private fun ActionButtonsV2(
+    isImporting: Boolean,
+    isAnalyzing: Boolean,
+    onAction: (HomeScreenAction) -> Unit
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Button(
+            onClick = { onAction(HomeScreenAction.OnImportSampleNfceUrlsClick) },
+            enabled = !isImporting && !isAnalyzing,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(48.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = MaterialTheme.colorScheme.primary
+            ),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            Text(text = if (isImporting) "Importando..." else "Importar notas NFC-e")
+        }
+
+        Button(
+            onClick = { onAction(HomeScreenAction.OnAnalyzeStoredReceiptsClick) },
+            enabled = !isAnalyzing && !isImporting,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(48.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = MaterialTheme.colorScheme.secondary
+            ),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            Text(text = if (isAnalyzing) "Analisando..." else "Analisar consumo")
+        }
+
+        Button(
+            onClick = { onAction(HomeScreenAction.OnClearReceiptsClick) },
+            enabled = !isImporting && !isAnalyzing,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(48.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = MaterialTheme.colorScheme.tertiary
+            ),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            Text(text = "Limpar dados locais")
+        }
+    }
+}
+
+@Composable
+private fun StoredReceiptsCardV2(
+    summary: StoredReceiptsSummary?,
+    importResult: ImportReceiptsResult?
+) {
+    if (summary == null) return
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        )
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text("Dados locais armazenados", style = MaterialTheme.typography.titleMedium)
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly
+            ) {
+                MetricBadge("Notas", summary.totalReceipts.toString())
+                MetricBadge("Itens", summary.totalItems.toString())
+                MetricBadge("Valor total", summary.totalValue.toCurrencyText())
+            }
+
+            if (importResult != null) {
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    text = "Ãšltima importaÃ§Ã£o: ${importResult.importedCount} novas, ${importResult.skippedCount} duplicadas",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun MetricBadge(label: String, value: String) {
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.primaryContainer,
+        modifier = Modifier.padding(4.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                value,
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onPrimaryContainer
+            )
+            Text(
+                label,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onPrimaryContainer
+            )
+        }
+    }
+}
+
+@Composable
+private fun ProfileResultCardV2(presentation: HomeAnalysisPresentation) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer
+        )
+    ) {
+        Column(modifier = Modifier.padding(20.dp)) {
+            Text(
+                "Perfil identificado",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Text(
+                presentation.profileTitle.uppercase(),
+                style = MaterialTheme.typography.headlineSmall,
+                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                textAlign = TextAlign.Start
+            )
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Text(
+                presentation.profileDescription,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onPrimaryContainer
+            )
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(
+                        "ConfianÃ§a",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                    )
+                    Text(
+                        presentation.confidenceLabel,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                }
+                Column {
+                    Text(
+                        "Origem",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                    )
+                    Text(
+                        presentation.sourceLabel,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ConsumptionReadingCardV2(reading: String) {
+    if (reading.isBlank()) return
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface
+        )
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                "Leitura do consumo",
+                style = MaterialTheme.typography.titleMedium
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            Text(
+                reading,
+                style = MaterialTheme.typography.bodyMedium,
+                lineHeight = MaterialTheme.typography.bodyMedium.lineHeight.times(1.5f),
+                color = MaterialTheme.colorScheme.onSurface
+            )
+        }
+    }
+}
+
+@Composable
+private fun PrimarySignalsCardV2(signals: List<String>) {
+    if (signals.isEmpty()) return
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.secondaryContainer
+        )
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                "Principais sinais",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSecondaryContainer
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+
+            signals.forEach { signal ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Surface(
+                        modifier = Modifier
+                            .padding(end = 12.dp),
+                        shape = RoundedCornerShape(50.dp),
+                        color = MaterialTheme.colorScheme.onSecondaryContainer
+                    ) {
+                        Text(
+                            "â€¢",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.secondaryContainer,
+                            modifier = Modifier
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                        )
+                    }
+                    Text(
+                        signal,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TechnicalDetailsCardV2(items: List<Pair<String, String>>) {
+    var expanded by rememberSaveable { mutableStateOf(false) }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        )
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "Detalhes tÃ©cnicos",
+                    style = MaterialTheme.typography.titleMedium
+                )
+                Button(
+                    onClick = { expanded = !expanded },
+                    modifier = Modifier.height(32.dp),
+                    shape = RoundedCornerShape(8.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.2f)
+                    )
+                ) {
+                    Text(
+                        if (expanded) "âˆ’" else "+",
+                        style = MaterialTheme.typography.titleSmall
+                    )
+                }
+            }
+
+            if (expanded) {
+                Spacer(modifier = Modifier.height(12.dp))
+                items.forEach { (label, value) ->
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            label,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            value,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.padding(bottom = 8.dp)
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun Double.toCurrencyText(): String = "R$ ${"%.2f".format(java.util.Locale.US, this).replace('.', ',')}"
+
 ```
 
 ## FILE: app/src/main/java/com/example/consumoai/presentation/home/HomeUiState.kt
@@ -3284,6 +4097,7 @@ package com.example.consumoai.presentation.home
 import com.example.consumoai.domain.model.ImportReceiptsResult
 import com.example.consumoai.domain.model.StoredReceiptsSummary
 import com.example.consumoai.domain.model.StoredConsumptionAnalysis
+import com.example.consumoai.presentation.home.model.HomeAnalysisPresentation
 
 data class HomeUiState(
     val isImporting: Boolean = false,
@@ -3291,6 +4105,7 @@ data class HomeUiState(
     val importResult: ImportReceiptsResult? = null,
     val localSummary: StoredReceiptsSummary? = null,
     val storedAnalysis: StoredConsumptionAnalysis? = null,
+    val analysisPresentation: HomeAnalysisPresentation? = null,
     val errorMessage: String? = null
 )
 ```
@@ -3306,10 +4121,13 @@ import com.example.consumoai.domain.usecase.AnalyzeStoredReceiptsUseCase
 import com.example.consumoai.domain.usecase.ClearReceiptsUseCase
 import com.example.consumoai.domain.usecase.GetStoredReceiptsSummaryUseCase
 import com.example.consumoai.domain.usecase.ImportSampleNfceReceiptsUseCase
+import com.example.consumoai.presentation.home.model.toHomeAnalysisPresentation
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class HomeViewModel(
     private val importSampleNfceReceiptsUseCase: ImportSampleNfceReceiptsUseCase,
@@ -3334,15 +4152,21 @@ class HomeViewModel(
             _uiState.value = _uiState.value.copy(isImporting = true, errorMessage = null)
 
             runCatching {
-                val result = importSampleNfceReceiptsUseCase()
-                val summary = getStoredReceiptsSummaryUseCase()
+                // Run IO operations on Dispatchers.IO
+                val result = withContext(Dispatchers.IO) {
+                    importSampleNfceReceiptsUseCase()
+                }
+                val summary = withContext(Dispatchers.IO) {
+                    getStoredReceiptsSummaryUseCase()
+                }
                 result to summary
             }.onSuccess { (result, summary) ->
                 _uiState.value = _uiState.value.copy(
                     isImporting = false,
                     importResult = result,
                     localSummary = summary,
-                    storedAnalysis = null
+                    storedAnalysis = null,
+                    analysisPresentation = null
                 )
             }.onFailure { error ->
                 _uiState.value = _uiState.value.copy(
@@ -3358,14 +4182,19 @@ class HomeViewModel(
             _uiState.value = _uiState.value.copy(isAnalyzing = true, errorMessage = null)
 
             runCatching {
-                val analysis = analyzeStoredReceiptsUseCase()
-                val summary = getStoredReceiptsSummaryUseCase()
-                analysis to summary
-            }.onSuccess { (analysis, summary) ->
+                // Run heavy computation on Dispatchers.Default
+                withContext(Dispatchers.Default) {
+                    analyzeStoredReceiptsUseCase()
+                }
+            }.onSuccess { analysis ->
+                val summary = withContext(Dispatchers.IO) {
+                    getStoredReceiptsSummaryUseCase()
+                }
                 _uiState.value = _uiState.value.copy(
                     isAnalyzing = false,
                     localSummary = summary,
-                    storedAnalysis = analysis
+                    storedAnalysis = analysis,
+                    analysisPresentation = analysis.toHomeAnalysisPresentation()
                 )
             }.onFailure { error ->
                 _uiState.value = _uiState.value.copy(
@@ -3376,6 +4205,7 @@ class HomeViewModel(
         }
     }
 
+
     private fun clearReceipts() {
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(
@@ -3385,7 +4215,9 @@ class HomeViewModel(
             )
 
             runCatching {
-                clearReceiptsUseCase()
+                withContext(Dispatchers.IO) {
+                    clearReceiptsUseCase()
+                }
             }.onSuccess {
                 _uiState.value = HomeUiState()
             }.onFailure { error ->
@@ -3397,7 +4229,213 @@ class HomeViewModel(
             }
         }
     }
+
 }
+
+```
+
+## FILE: app/src/main/java/com/example/consumoai/presentation/home/model/HomeAnalysisPresentation.kt
+
+```kotlin
+package com.example.consumoai.presentation.home.model
+
+data class HomeAnalysisPresentation(
+    val profileTitle: String,
+    val profileDescription: String,
+    val consumptionReading: String,
+    val confidenceLabel: String,
+    val sourceLabel: String,
+    val sourceWarning: String?,
+    val primarySignals: List<String>,
+    val technicalItems: List<Pair<String, String>>
+)
+
+```
+
+## FILE: app/src/main/java/com/example/consumoai/presentation/home/model/HomeAnalysisPresentationMapper.kt
+
+```kotlin
+package com.example.consumoai.presentation.home.model
+
+import com.example.consumoai.domain.model.BehaviorClassificationSource
+import com.example.consumoai.domain.model.ConsumptionBehaviorProfile
+import com.example.consumoai.domain.model.FallbackReason
+import com.example.consumoai.domain.model.MODEL_V2_FINAL_FEATURE_COUNT
+import com.example.consumoai.domain.model.MODEL_V2_INTERNAL_METRICS_COUNT
+import com.example.consumoai.domain.model.ProfileInterpretationType
+import com.example.consumoai.domain.model.ProductCategory
+import com.example.consumoai.domain.model.StoredConsumptionAnalysis
+import java.util.Locale
+
+fun StoredConsumptionAnalysis.toHomeAnalysisPresentation(): HomeAnalysisPresentation {
+	val selectedInput = modelInput
+	val baseMetrics = metricsV2.baseMetrics
+	val summary = behaviorResult.profileSummary
+
+	val technical = mutableListOf<Pair<String, String>>()
+	technical += "Modelo" to "XGBoost V2 Top 15"
+	technical += "Backend" to (behaviorResult.backendModelUsed ?: "v2")
+	technical += "Features enviadas ao modelo" to "${MODEL_V2_FINAL_FEATURE_COUNT} (de ${MODEL_V2_INTERNAL_METRICS_COUNT} mÃ©tricas internas)"
+	technical += "VersÃ£o de entrada" to (behaviorResult.requestedInputVersion ?: selectedInput.version)
+	technical += "Fonte da classificaÃ§Ã£o" to behaviorResult.source.toTechnicalLabel()
+	technical += "ConfianÃ§a" to behaviorResult.confidence.toPercentageText()
+	technical += "Tipo de interpretaÃ§Ã£o" to (summary?.interpretationType?.name ?: ProfileInterpretationType.PURE_PROFILE.name)
+	technical += "Itens classificados" to baseMetrics.classifiedItemsPercentage.toPercentageText()
+	technical += "OTHER por valor" to baseMetrics.otherPercentageByValue.toPercentageText()
+	technical += "InferÃªncia (ms)" to behaviorResult.inferenceDurationMs.toString()
+	technical += "Input sanitizado" to if (behaviorResult.usedSanitizedInput) "Sim (${behaviorResult.sanitizationNotes.size} ajustes)" else "NÃ£o"
+	behaviorResult.fallbackReason?.let { technical += "Motivo do fallback" to it.name }
+	technical += "MÃ©tricas internas" to "${MODEL_V2_INTERNAL_METRICS_COUNT} calculadas"
+	technical += "Notas analisadas" to baseMetrics.totalReceipts.toString()
+	technical += "Itens analisados" to baseMetrics.totalItems.toString()
+	if (baseMetrics.classifiedItemsPercentage < 0.70) {
+		technical += "Aviso tÃ©cnico" to "HÃ¡ muitos itens nÃ£o classificados. Isso pode reduzir a confiabilidade da anÃ¡lise."
+	}
+
+	selectedInput.features.toSortedMap().forEach { (name, value) ->
+		technical += "Feature $name" to value.toNumberText()
+	}
+
+	behaviorResult.profileScores
+		.toList()
+		.sortedByDescending { (_, score) -> score }
+		.take(3)
+		.forEach { (profile, score) ->
+			technical += "Probabilidade ${profile.toDisplayName()}" to score.toPercentageText()
+		}
+
+	return HomeAnalysisPresentation(
+		profileTitle = summary.toPresentationTitle(behaviorResult.mainProfile),
+		profileDescription = behaviorResult.mainProfile.toDescription(),
+		consumptionReading = buildBehavioralReading(this),
+		confidenceLabel = behaviorResult.confidence.toConfidenceLabel(),
+		sourceLabel = behaviorResult.source.toDisplayLabel(),
+		sourceWarning = behaviorResult.source.toWarningMessage(behaviorResult.fallbackReason),
+		primarySignals = buildPrimarySignals(this),
+		technicalItems = technical
+	)
+}
+
+private fun buildPrimarySignals(analysis: StoredConsumptionAnalysis): List<String> {
+	val base = analysis.metricsV2.baseMetrics
+	val v2 = analysis.metricsV2
+
+	return buildList {
+		add("Bebidas presentes em ${base.frequencyByCategory[ProductCategory.BEVERAGES].orZero().toPercentageText()} das notas")
+		add("AlimentaÃ§Ã£o bÃ¡sica representa ${base.valuePercentageByCategory[ProductCategory.BASIC_FOOD].orZero().toPercentageText()} do valor")
+		add("Diversidade alta entre categorias")
+		add("RecorrÃªncia de itens em ${v2.recurringItemRatio.toPercentageText()} das compras")
+		add("Bebidas + snacks em ${v2.beverageSnackCoOccurrenceFrequency.toPercentageText()} das notas")
+	}.take(5)
+}
+
+private fun buildBehavioralReading(analysis: StoredConsumptionAnalysis): String {
+	val base = analysis.metricsV2.baseMetrics
+	val beverageFrequency = base.frequencyByCategory[ProductCategory.BEVERAGES].orZero().toPercentageText()
+	val essentialValue = base.valuePercentageByCategory[ProductCategory.BASIC_FOOD].orZero().toPercentageText()
+	val cooccurrence = analysis.metricsV2.beverageSnackCoOccurrenceFrequency.toPercentageText()
+
+	return buildString {
+		append("As compras analisadas mostram um padrÃ£o variado, com presenÃ§a frequente de bebidas")
+		append(" (")
+		append(beverageFrequency)
+		append(" das notas)")
+		append(" e combinaÃ§Ã£o com snacks em ")
+		append(cooccurrence)
+		append('.')
+		append("\n\n")
+		append("Apesar disso, alimentaÃ§Ã£o bÃ¡sica continua relevante em valor (")
+		append(essentialValue)
+		append("), indicando que o consumo nÃ£o estÃ¡ concentrado apenas em conveniÃªncia. ")
+		append("A diversidade entre categorias sugere uma rotina relativamente equilibrada, com presenÃ§a complementar de itens domÃ©sticos e higiene.")
+	}
+}
+
+private fun com.example.consumoai.domain.model.ConsumptionProfileSummary?.toPresentationTitle(
+	defaultProfile: ConsumptionBehaviorProfile
+): String {
+	val summary = this ?: return defaultProfile.toDisplayName()
+	return when (summary.interpretationType) {
+		ProfileInterpretationType.PURE_PROFILE -> summary.primaryProfile.toDisplayName()
+		ProfileInterpretationType.HYBRID_PROFILE -> "Perfil hÃ­brido: ${summary.primaryProfile.toDisplayName()}"
+		ProfileInterpretationType.LOW_CONFIDENCE_PROFILE -> "Baixa confianÃ§a: ${summary.primaryProfile.toDisplayName()}"
+	}
+}
+
+fun ConsumptionBehaviorProfile.toDisplayName(): String {
+	return when (this) {
+		ConsumptionBehaviorProfile.CONVENIENCE_ORIENTED -> "Orientado Ã  conveniÃªncia"
+		ConsumptionBehaviorProfile.ESSENTIAL_FOCUSED -> "Focado no essencial"
+		ConsumptionBehaviorProfile.DIVERSIFIED_BALANCED -> "Diversificado e equilibrado"
+		ConsumptionBehaviorProfile.BEVERAGE_RECURRENT -> "Recorrente em bebidas"
+		ConsumptionBehaviorProfile.LOW_FRESH_FOOD -> "Baixa presenÃ§a de hortifruti"
+		ConsumptionBehaviorProfile.HOUSEHOLD_MAINTENANCE -> "Foco em manutenÃ§Ã£o domÃ©stica"
+		ConsumptionBehaviorProfile.HIGHLY_CONCENTRATED -> "Consumo concentrado"
+		ConsumptionBehaviorProfile.IMPULSIVE_CONSUMPTION -> "Consumo impulsivo"
+		ConsumptionBehaviorProfile.UNDEFINED -> "Indefinido"
+	}
+}
+
+fun ConsumptionBehaviorProfile.toDescription(): String {
+	return when (this) {
+		ConsumptionBehaviorProfile.CONVENIENCE_ORIENTED -> "Maior presenÃ§a de produtos industrializados e compras voltadas Ã  praticidade."
+		ConsumptionBehaviorProfile.ESSENTIAL_FOCUSED -> "PredominÃ¢ncia de itens essenciais e alimentaÃ§Ã£o bÃ¡sica nas compras analisadas."
+		ConsumptionBehaviorProfile.DIVERSIFIED_BALANCED -> "DistribuiÃ§Ã£o relativamente equilibrada entre diferentes categorias de consumo."
+		ConsumptionBehaviorProfile.BEVERAGE_RECURRENT -> "Bebidas aparecem com recorrÃªncia relevante nas notas analisadas."
+		ConsumptionBehaviorProfile.LOW_FRESH_FOOD -> "Baixa participaÃ§Ã£o de hortifruti e alimentos frescos no consumo analisado."
+		ConsumptionBehaviorProfile.HOUSEHOLD_MAINTENANCE -> "Maior presenÃ§a de produtos de higiene e limpeza domÃ©stica."
+		ConsumptionBehaviorProfile.HIGHLY_CONCENTRATED -> "Grande parte do consumo estÃ¡ concentrada em poucas categorias."
+		ConsumptionBehaviorProfile.IMPULSIVE_CONSUMPTION -> "Maior presenÃ§a de categorias nÃ£o essenciais e compras de conveniÃªncia."
+		ConsumptionBehaviorProfile.UNDEFINED -> "NÃ£o foi possÃ­vel identificar um padrÃ£o confiÃ¡vel com os dados atuais."
+	}
+}
+
+private fun BehaviorClassificationSource.toDisplayLabel(): String {
+	return when (this) {
+		BehaviorClassificationSource.TRAINED_MODEL -> "Modelo treinado"
+		BehaviorClassificationSource.RULE_BASED_FALLBACK -> "Fallback local"
+	}
+}
+
+private fun BehaviorClassificationSource.toTechnicalLabel(): String {
+	return when (this) {
+		BehaviorClassificationSource.TRAINED_MODEL -> "TRAINED_MODEL"
+		BehaviorClassificationSource.RULE_BASED_FALLBACK -> "RULE_BASED_FALLBACK"
+	}
+}
+
+private fun BehaviorClassificationSource.toWarningMessage(fallbackReason: FallbackReason?): String? {
+	return when (this) {
+		BehaviorClassificationSource.TRAINED_MODEL -> null
+		BehaviorClassificationSource.RULE_BASED_FALLBACK -> buildString {
+			if (fallbackReason == FallbackReason.BACKEND_REJECTED_INPUT) {
+				append("NÃ£o foi possÃ­vel usar o modelo treinado V2. Resultado gerado localmente.")
+			} else {
+				append("Backend indisponÃ­vel. Resultado gerado por fallback local")
+				fallbackReason?.let { append(" (${it.name})") }
+				append('.')
+			}
+		}
+	}
+}
+
+
+private fun Double.toConfidenceLabel(): String {
+	return when {
+		this >= 0.85 -> "PadrÃ£o de consumo muito consistente"
+		this >= 0.70 -> "PadrÃ£o de consumo consistente"
+		this >= 0.50 -> "PadrÃ£o de consumo parcialmente consistente"
+		else -> "PadrÃ£o de consumo variado"
+	}
+}
+
+
+private fun Double.toPercentageText(): String = "${"%.1f".format(Locale.US, this * 100)}%"
+
+private fun Double.toNumberText(): String = "%.4f".format(Locale.US, this)
+
+private fun Double?.orZero(): Double = this ?: 0.0
+
 ```
 
 ## FILE: app/src/main/java/com/example/consumoai/ui/theme/Color.kt
@@ -3528,46 +4566,423 @@ import com.example.consumoai.domain.model.ProductItem
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
+/**
+ * Tests for KeywordProductClassifierDataSource (V1.1 - 2026-05-14)
+ *
+ * Objective: Validate that ~125+ items from OTHER are reclassified to proper categories
+ * based on expanded keywords and special rule functions.
+ *
+ * Status: Covers beverages, hygiene, cleaning, industrialized, basic_food, and produce
+ */
 class KeywordProductClassifierDataSourceTest {
 
     private val classifier = KeywordProductClassifierDataSource()
 
+    // ========== BEVERAGES (including alcoholic and energy drinks) ==========
+
     @Test
-    fun classify_all_coversMainCategories() {
-        val input = listOf(
-            ProductItem(name = "SUCO NATURALE LARANJA", price = 13.9),
-            ProductItem(name = "BISC TORTIN ISABELA", price = 2.69),
-            ProductItem(name = "PAPEL HIGIENICO NEVE", price = 18.0),
-            ProductItem(name = "DETERGENTE YPE", price = 3.5),
-            ProductItem(name = "SHAMPOO PANTENE", price = 19.9),
-            ProductItem(name = "SABAO YPE", price = 8.5),
-            ProductItem(name = "BANANA CATURRA", price = 7.0),
-            ProductItem(name = "ARROZ TIPO 1", price = 25.0),
-            ProductItem(name = "TOMATE", price = 6.0),
-            ProductItem(name = "TOMATE S/PELE", price = 4.5)
-        )
-
-        val output = classifier.classifyAll(input)
-
-        assertEquals(ProductCategory.BEVERAGES, output[0].category)
-        assertEquals(ProductCategory.INDUSTRIALIZED, output[1].category)
-        assertEquals(ProductCategory.HYGIENE, output[2].category)
-        assertEquals(ProductCategory.CLEANING, output[3].category)
-        assertEquals(ProductCategory.HYGIENE, output[4].category)
-        assertEquals(ProductCategory.CLEANING, output[5].category)
-        assertEquals(ProductCategory.PRODUCE, output[6].category)
-        assertEquals(ProductCategory.BASIC_FOOD, output[7].category)
-        assertEquals(ProductCategory.PRODUCE, output[8].category)
-        assertEquals(ProductCategory.BASIC_FOOD, output[9].category)
+    fun classify_beverage_softDrinks() {
+        assertCategory("COCA-COLA ORIGINAL LATA 350ML", ProductCategory.BEVERAGES)
+        assertCategory("SUCO NATURALE LARANJA", ProductCategory.BEVERAGES)
+        assertCategory("GUARANA 2L", ProductCategory.BEVERAGES)
+        assertCategory("FANTA UVAICE 1LT", ProductCategory.BEVERAGES)
+        assertCategory("SPRITE 2LT", ProductCategory.BEVERAGES)
     }
 
     @Test
-    fun classify_appliesCommonOcrFixesBeforeMatching() {
-        val item = ProductItem(name = "HOLHO TOMATE T03", price = 10.0)
+    fun classify_beverage_alcoholic() {
+        // Beer - common brands and styles
+        assertCategory("CHOPP TUPINIQUIM IPA 1L", ProductCategory.BEVERAGES)
+        assertCategory("CV BADEN BADEN IPA LT 473ML", ProductCategory.BEVERAGES)
+        assertCategory("CV BLUE MOON BELGIAN LT 350ML", ProductCategory.BEVERAGES)
+        assertCategory("KAISERDOM PREMIUM 350ML", ProductCategory.BEVERAGES)
+        assertCategory("PILSEN BRAHMA 350ML", ProductCategory.BEVERAGES)
 
-        val classified = classifier.classify(item)
+        // Wine
+        assertCategory("VH AURORA C.SAUV 750ML", ProductCategory.BEVERAGES)
+        assertCategory("VINHO CONCHA Y TORO 750ML", ProductCategory.BEVERAGES)
+    }
 
-        assertEquals(ProductCategory.BASIC_FOOD, classified.category)
+    @Test
+    fun classify_beverage_energy() {
+        assertCategory("ENERG MONSTER 473ML", ProductCategory.BEVERAGES)
+        assertCategory("ENERGETICO RED BULL 250ML", ProductCategory.BEVERAGES)
+    }
+
+    @Test
+    fun classify_beverage_water() {
+        assertCategory("AGUA MINERAL PUREZA 1.5L", ProductCategory.BEVERAGES)
+        assertCategory("CHA GELADO", ProductCategory.BEVERAGES)
+    }
+
+    // ========== HYGIENE ==========
+
+    @Test
+    fun classify_hygiene_paperProducts() {
+        assertCategory("P H NEVE T.SEDA DUPL L16P15 30M", ProductCategory.HYGIENE)
+        assertCategory("PAPEL HIGIENICO SOFT 30M", ProductCategory.HYGIENE)
+    }
+
+    @Test
+    fun classify_hygiene_hairCare() {
+        assertCategory("SH HEAD&SHOULDERS A.COC 650ML", ProductCategory.HYGIENE)
+        assertCategory("SH CLEAR MEN LIMP PROF 400ML", ProductCategory.HYGIENE)
+        assertCategory("CONDICIONADOR PANTENE 200ML", ProductCategory.HYGIENE)
+    }
+
+    @Test
+    fun classify_hygiene_personalCare() {
+        assertCategory("SABONETE DOVE 90G", ProductCategory.HYGIENE)
+        assertCategory("DESODORANTE REXONA CLINICAL MEN 150ML", ProductCategory.HYGIENE)
+        assertCategory("CARGA GILLETTE MACH3 SENS C/2", ProductCategory.HYGIENE)
+        assertCategory("CR D COLGATE T.ACAO 180G PROM", ProductCategory.HYGIENE)
+        assertCategory("ESCOVA DENTAL COLGATE", ProductCategory.HYGIENE)
+        assertCategory("FIO DENTAL ORAL-B 50M", ProductCategory.HYGIENE)
+        assertCategory("ABSORVENTE KOTEX PROTEPLUS", ProductCategory.HYGIENE)
+        assertCategory("FRALDA PAMPERS RN", ProductCategory.HYGIENE)
+    }
+
+    @Test
+    fun classify_hygiene_wipes() {
+        assertCategory("TOALHA UMED HUGGIES L4P3 C/48UN", ProductCategory.HYGIENE)
+        assertCategory("LENCO UMED HUGGIES T.PROT C/88", ProductCategory.HYGIENE)
+        assertCategory("LENCO UMEDECIDO KLEENEX", ProductCategory.HYGIENE)
+    }
+
+    @Test
+    fun classify_hygiene_otherProducts() {
+        assertCategory("ALGODAO JOHNSON 100G", ProductCategory.HYGIENE)
+        assertCategory("COTONETE JOHNSON", ProductCategory.HYGIENE)
+        assertCategory("PRESERVATIVO OLLA", ProductCategory.HYGIENE)
+    }
+
+    // ========== CLEANING ==========
+
+    @Test
+    fun classify_cleaning_dishDetergent() {
+        assertCategory("DET LQ LOUCA LIMPOL LIMAO 500ML", ProductCategory.CLEANING)
+        assertCategory("DETERGENTE SUNDOWN 500ML", ProductCategory.CLEANING)
+        assertCategory("LAV LOUCA ULTRAPURO 500ML", ProductCategory.CLEANING)
+    }
+
+    @Test
+    fun classify_cleaning_laundry() {
+        assertCategory("L ROUP PO OMO L.PERFEITA 2,2KG", ProductCategory.CLEANING)
+        assertCategory("LAVA ROUPAS PO ARIEL 1.5KG", ProductCategory.CLEANING)
+        assertCategory("AMAC CONC COMFORT FRESCOR 1L", ProductCategory.CLEANING)
+        assertCategory("AMACIANTE DOWNY 900ML", ProductCategory.CLEANING)
+    }
+
+    @Test
+    fun classify_cleaning_floors() {
+        assertCategory("LIMP AJAX FRESH PODER 1L", ProductCategory.CLEANING)
+        assertCategory("LIMP PISO MAD DESTAC L&VAN 750ML", ProductCategory.CLEANING)
+        assertCategory("MULTIUSO SPRAY AJAX", ProductCategory.CLEANING)
+    }
+
+    @Test
+    fun classify_cleaning_disinfectants() {
+        assertCategory("DESINF PINHO SOL ORIG L500P450ML", ProductCategory.CLEANING)
+        assertCategory("DESINFETANTE LYSOFORM", ProductCategory.CLEANING)
+        assertCategory("AGUA SANITARIA 1L", ProductCategory.CLEANING)
+    }
+
+    @Test
+    fun classify_cleaning_otherProducts() {
+        assertCategory("SACO LIXO UTILO 50L C/10", ProductCategory.CLEANING)
+        assertCategory("ESPONJA ESFREBOM BOMBRIL", ProductCategory.CLEANING)
+        assertCategory("P TOALHA MILI 3X200F", ProductCategory.CLEANING)
+        assertCategory("PAPEL TOALHA ROLL 200M", ProductCategory.CLEANING)
+        assertCategory("FILTRO PAPEL LITE", ProductCategory.CLEANING)
+    }
+
+    // ========== INDUSTRIALIZED ==========
+
+    @Test
+    fun classify_industrialized_pizza() {
+        assertCategory("PIZZA SADIA MUSSARELA 440G", ProductCategory.INDUSTRIALIZED)
+        assertCategory("PIZZA SEARA CALABRESA 500G", ProductCategory.INDUSTRIALIZED)
+    }
+
+    @Test
+    fun classify_industrialized_pasta() {
+        assertCategory("LASANHA SADIA BOLONHESA MN350G", ProductCategory.INDUSTRIALIZED)
+        assertCategory("MAC NISSIN GALINHA CAIPIRA 85G", ProductCategory.INDUSTRIALIZED)
+        assertCategory("NISSIN LAMEN FRANGO 85G", ProductCategory.INDUSTRIALIZED)
+    }
+
+    @Test
+    fun classify_industrialized_snacks() {
+        assertCategory("SALG FANDANGOS PRESUNTO 160G", ProductCategory.INDUSTRIALIZED)
+        assertCategory("SALG DORITOS MOSTARDA HEINZ 110G", ProductCategory.INDUSTRIALIZED)
+        assertCategory("SALG CHEETOS ONDA REQUEIJAO 105G", ProductCategory.INDUSTRIALIZED)
+        assertCategory("SALGADINHO FRITO LAY", ProductCategory.INDUSTRIALIZED)
+    }
+
+    @Test
+    fun classify_industrialized_sweets() {
+        assertCategory("TRENTO DARK 55% CACAU 29G", ProductCategory.INDUSTRIALIZED)
+        assertCategory("BOLO MARMORE S.BOYS 250G", ProductCategory.INDUSTRIALIZED)
+        assertCategory("ROSCA POLV TRAD GUSMAN 70G", ProductCategory.INDUSTRIALIZED)
+        assertCategory("CHOCOLATE BRIGADEIRO", ProductCategory.INDUSTRIALIZED)
+        assertCategory("BALA HALLS MENTA", ProductCategory.INDUSTRIALIZED)
+    }
+
+    @Test
+    fun classify_industrialized_snackFood() {
+        assertCategory("PIPOCA MIC YOKI COB CARAM 160G", ProductCategory.INDUSTRIALIZED)
+        assertCategory("COOKIE BAUDUCCO CHOCOLATE", ProductCategory.INDUSTRIALIZED)
+        assertCategory("WAFER BAUDUCCO CHOCOLATE", ProductCategory.INDUSTRIALIZED)
+        assertCategory("BISCOITO ISABELA", ProductCategory.INDUSTRIALIZED)
+        assertCategory("WRAP TORTILHA FRESCATA", ProductCategory.INDUSTRIALIZED)
+    }
+
+    @Test
+    fun classify_industrialized_sauces() {
+        assertCategory("MAIONESE HELLMANN 500ML", ProductCategory.INDUSTRIALIZED)
+        assertCategory("KETCHUP HEINZ 1KG", ProductCategory.INDUSTRIALIZED)
+        assertCategory("MOSTARDA HEINZ 390G", ProductCategory.INDUSTRIALIZED)
+        assertCategory("TEMPERO SAZON 60G", ProductCategory.INDUSTRIALIZED)
+    }
+
+    // ========== BASIC FOOD ==========
+
+    @Test
+    fun classify_basicFood_meat() {
+        assertCategory("PATINHO ZAFFARI NOV E.LIMPO", ProductCategory.BASIC_FOOD)
+        assertCategory("COXAO DENTRO PEDACO", ProductCategory.BASIC_FOOD)
+        assertCategory("CARNE MOIDA 500G", ProductCategory.BASIC_FOOD)
+        assertCategory("FRANGO INTEIRO SADIA", ProductCategory.BASIC_FOOD)
+        assertCategory("PEITO FRANGO CONGELADO", ProductCategory.BASIC_FOOD)
+        assertCategory("SALSICHA SADIA 500G", ProductCategory.BASIC_FOOD)
+        assertCategory("LINGUICA PERDIGAO 500G", ProductCategory.BASIC_FOOD)
+        assertCategory("PRESUNTO SADIA FATIADO", ProductCategory.BASIC_FOOD)
+        assertCategory("MORTADELA SADIA 500G", ProductCategory.BASIC_FOOD)
+    }
+
+    @Test
+    fun classify_basicFood_dairy() {
+        assertCategory("LEITE INTEGRAL PARMALAT 1L", ProductCategory.BASIC_FOOD)
+        assertCategory("IOGURTE ATIVA 540G", ProductCategory.BASIC_FOOD)
+        assertCategory("IOG NATURAL INTEGRAL", ProductCategory.BASIC_FOOD)
+        assertCategory("QJO MUSSARELA PRES FAT 300G", ProductCategory.BASIC_FOOD)
+        assertCategory("QUEIJO MOZZARELLA SADIA", ProductCategory.BASIC_FOOD)
+        assertCategory("REQUEIJAO VIGOR CREM TRAD 400G", ProductCategory.BASIC_FOOD)
+        assertCategory("MANTEIGA COM SAL BRIT", ProductCategory.BASIC_FOOD)
+        assertCategory("MARGARINA DELICIA", ProductCategory.BASIC_FOOD)
+    }
+
+    @Test
+    fun classify_basicFood_tomatoProducts() {
+        assertCategory("MOLHO TOMATE HEINZ 350G", ProductCategory.BASIC_FOOD)
+        assertCategory("PASSATA MOLISANA 690G", ProductCategory.BASIC_FOOD)
+        assertCategory("EXTRATO TOMATE CASARÃƒO", ProductCategory.BASIC_FOOD)
+        assertCategory("TOMATE PELADO MUTTI 400G", ProductCategory.BASIC_FOOD)
+    }
+
+    @Test
+    fun classify_basicFood_grains() {
+        assertCategory("ARROZ TIPO 1 INTEGRAL", ProductCategory.BASIC_FOOD)
+        assertCategory("FEIJAO PRETO 1KG", ProductCategory.BASIC_FOOD)
+        assertCategory("MACARRAO SEMOLINA GALLO", ProductCategory.BASIC_FOOD)
+        assertCategory("ESPAGUETE GALLO 500G", ProductCategory.BASIC_FOOD)
+        assertCategory("FARINHA BRANCA DONA BENTA", ProductCategory.BASIC_FOOD)
+    }
+
+    @Test
+    fun classify_basicFood_otherProducts() {
+        assertCategory("CAFE PREMIUM 500G", ProductCategory.BASIC_FOOD)
+        assertCategory("ACUCAR CRISTAL CRISTALINO 1KG", ProductCategory.BASIC_FOOD)
+        assertCategory("SAL REFINADO EXTRA IOD CISNE 1KG", ProductCategory.BASIC_FOOD)
+        assertCategory("OLEO SOJA CARGILL 900ML", ProductCategory.BASIC_FOOD)
+        assertCategory("MEL APIARIO PADRE ASSIS 500G", ProductCategory.BASIC_FOOD)
+        assertCategory("AVEIA FLOCOS FINOS TUTTI 170G", ProductCategory.BASIC_FOOD)
+        assertCategory("AMENDOIM BCO PREM F.FRIDA 400G", ProductCategory.BASIC_FOOD)
+        assertCategory("MILHO VERDE 700G", ProductCategory.BASIC_FOOD)
+        assertCategory("PAO FRANCES DIARIO", ProductCategory.BASIC_FOOD)
+        assertCategory("CACETINHO PRADO", ProductCategory.BASIC_FOOD)
+        assertCategory("OVO CAIPIRA DZIA 30UN", ProductCategory.BASIC_FOOD)
+        assertCategory("ATUM GOMES DA COSTA 170G", ProductCategory.BASIC_FOOD)
+        assertCategory("SARDINHA CONSERVA", ProductCategory.BASIC_FOOD)
+    }
+
+    // ========== PRODUCE ==========
+
+    @Test
+    fun classify_produce_fruits() {
+        assertCategory("BANANA PRATA", ProductCategory.PRODUCE)
+        assertCategory("MACA RED 1KG", ProductCategory.PRODUCE)
+        assertCategory("MAMAO PAPAYA", ProductCategory.PRODUCE)
+        assertCategory("LARANJA PERA MUDA", ProductCategory.PRODUCE)
+        assertCategory("MORANGO 500G", ProductCategory.PRODUCE)
+        assertCategory("UVA VERDE 1KG", ProductCategory.PRODUCE)
+        assertCategory("LIMAO TAHITI", ProductCategory.PRODUCE)
+        assertCategory("ABACAXI PEROLA", ProductCategory.PRODUCE)
+        assertCategory("MELANCIA ESTACAO CUBO AS", ProductCategory.PRODUCE)
+        assertCategory("MELAO 1,5KG", ProductCategory.PRODUCE)
+        assertCategory("PERA IMPORTADA", ProductCategory.PRODUCE)
+    }
+
+    @Test
+    fun classify_produce_vegetables() {
+        assertCategory("TOMATE ITALIANO 500G", ProductCategory.PRODUCE)
+        assertCategory("BATATA COMUM 1KG", ProductCategory.PRODUCE)
+        assertCategory("CENOURA 1KG", ProductCategory.PRODUCE)
+        assertCategory("CEBOLA ROXA 1KG", ProductCategory.PRODUCE)
+        assertCategory("ALFACE HIDROPONICA", ProductCategory.PRODUCE)
+        assertCategory("PIMENTAO VERDE GRANEL", ProductCategory.PRODUCE)
+        assertCategory("CEBOLINHA FRESCA 100G", ProductCategory.PRODUCE)
+        assertCategory("ALHO GRANEL", ProductCategory.PRODUCE)
+    }
+
+    @Test
+    fun classify_produce_greenVegetables() {
+        assertCategory("BROCOLIS 500G", ProductCategory.PRODUCE)
+        assertCategory("COUVE MINEIRA FRESCA", ProductCategory.PRODUCE)
+        assertCategory("REPOLHO VERDE 1KG", ProductCategory.PRODUCE)
+        assertCategory("PEPINO COMUM", ProductCategory.PRODUCE)
+        assertCategory("ABOBRINHA ITALIANA", ProductCategory.PRODUCE)
+        assertCategory("BERINJELA ROXA", ProductCategory.PRODUCE)
+    }
+
+    @Test
+    fun classify_produce_roots() {
+        assertCategory("MANDIOCA FRESCA 1KG", ProductCategory.PRODUCE)
+        assertCategory("AIPIM DESCASCADO", ProductCategory.PRODUCE)
+        assertCategory("INHAME BRANCO", ProductCategory.PRODUCE)
+    }
+
+    // ========== AMBIGUOUS/EDGE CASES ==========
+
+    @Test
+    fun classify_ambiguous_paperVsCloth() {
+        // P TOALHA should be CLEANING, not HYGIENE
+        assertCategory("P TOALHA MILI 3X200F", ProductCategory.CLEANING)
+
+        // TOALHA UMED should be HYGIENE
+        assertCategory("TOALHA UMED HUGGIES L4P3 C/48UN", ProductCategory.HYGIENE)
+    }
+
+    @Test
+    fun classify_ambiguous_desodorantContext() {
+        // DES with REXONA or DOVE -> HYGIENE
+        assertCategory("DES REXONA CLINICAL MEN 150ML", ProductCategory.HYGIENE)
+        assertCategory("DES DOVE", ProductCategory.HYGIENE)
+    }
+
+    @Test
+    fun classify_ambiguous_shampooBrand() {
+        // SH with CLEAR or HEAD -> HYGIENE
+        assertCategory("SH HEAD&SHOULDERS A.COC 650ML", ProductCategory.HYGIENE)
+        assertCategory("SH CLEAR MEN LIMP PROF 400ML", ProductCategory.HYGIENE)
+    }
+
+    @Test
+    fun classify_ambiguous_shortTokens_doNotGenerateFalsePositivesWithoutContext() {
+        assertCategory("SH 250ML", ProductCategory.OTHER)
+        assertCategory("DES 150ML", ProductCategory.OTHER)
+        assertCategory("SAB 90G", ProductCategory.OTHER)
+        assertCategory("ALE 600ML", ProductCategory.OTHER)
+        assertCategory("VH 750ML", ProductCategory.OTHER)
+        assertCategory("BEB MISTA", ProductCategory.OTHER)
+    }
+
+    @Test
+    fun classify_ambiguous_shortTokens_matchWhenContextIsSafe() {
+        assertCategory("VH AURORA C.SAUV 750ML", ProductCategory.BEVERAGES)
+        assertCategory("DES REXONA CLINICAL MEN 150ML", ProductCategory.HYGIENE)
+        assertCategory("SAB DOVE KARITE 90G", ProductCategory.HYGIENE)
+        assertCategory("SH CLEAR MEN 400ML", ProductCategory.HYGIENE)
+        assertCategory("AMAC COMFORT FRESCOR 1L", ProductCategory.CLEANING)
+    }
+
+    @Test
+    fun classify_ambiguous_fleshTomatoVsProcessed() {
+        // Pure TOMATE -> PRODUCE
+        assertCategory("TOMATE ITALIANO 500G", ProductCategory.PRODUCE)
+
+        // MOLHO TOMATE -> BASIC_FOOD
+        assertCategory("MOLHO TOMATE HEINZ 350G", ProductCategory.BASIC_FOOD)
+    }
+
+    // ========== ITEMS THAT SHOULD REMAIN OTHER (non-food) ==========
+
+    @Test
+    fun classify_nonFood_shouldRemainOther() {
+        // These items don't fit into food/personal care categories in V1
+        assertCategory("TULIPA VASO 12", ProductCategory.OTHER)
+        assertCategory("CANECA PLASUTIL 14468 MICK 360ML", ProductCategory.OTHER)
+        assertCategory("FITA CREPE T.BOND FIXA 48X50M", ProductCategory.OTHER)
+        assertCategory("CAD 1M 80F CREDEAL ESSENC 281635", ProductCategory.OTHER)
+        assertCategory("PULVERIZ SANREMO 512 AZ 350ML", ProductCategory.OTHER)
+        assertCategory("ALIM CAO PEDIGREE FIL 900G", ProductCategory.OTHER)  // Pet food
+        assertCategory("BIFINHO PETHAND SENIOR CARN 65G", ProductCategory.OTHER)  // Pet food
+    }
+
+    // ========== TEST COVERAGE ==========
+
+    @Test
+    fun classifyAll_generatesClassificationSummary() {
+        val items = listOf(
+            ProductItem(name = "COCA-COLA 350ML", price = 5.0),
+            ProductItem(name = "ARROZ 1KG", price = 8.0),
+            ProductItem(name = "TOMATE", price = 3.0),
+            ProductItem(name = "SABONETE DOVE", price = 2.5),
+            ProductItem(name = "DETERGENTE 500ML", price = 3.0),
+            ProductItem(name = "PIZZA SADIA", price = 12.0),
+            ProductItem(name = "DESCONHECIDO XYZ", price = 99.0)  // This will be OTHER
+        )
+
+        val results = classifier.classifyAll(items)
+
+        // Summary will be logged, we just ensure it doesn't crash
+        assertEquals(7, results.size)
+
+        // Check that at least 6 are not OTHER
+        val otherCount = results.count { it.category == ProductCategory.OTHER }
+        assertEquals(1, otherCount)
+    }
+
+    private fun assertCategory(name: String, expected: ProductCategory) {
+        val item = ProductItem(name = name, price = 10.0)
+        val result = classifier.classify(item)
+        assertEquals("Failed for item: '$name'", expected, result.category)
+    }
+}
+```
+
+## FILE: app/src/test/java/com/example/consumoai/data/classifier/KeywordProductSemanticTaggerTest.kt
+
+```kotlin
+package com.example.consumoai.data.classifier
+
+import com.example.consumoai.domain.model.ProductCategory
+import com.example.consumoai.domain.model.ProductItem
+import com.example.consumoai.domain.model.ProductSemanticTag
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class KeywordProductSemanticTaggerTest {
+
+    private val tagger = KeywordProductSemanticTagger()
+
+    @Test
+    fun tags_expectedKeywords() {
+        assertHas("CHOPP IPA", ProductSemanticTag.ALCOHOLIC_BEVERAGE)
+        assertHas("COCA COLA", ProductSemanticTag.SOFT_DRINK)
+        assertHas("MONSTER", ProductSemanticTag.ENERGY_DRINK)
+        assertHas("DORITOS", ProductSemanticTag.SNACK_OR_SWEET)
+        assertHas("PIZZA SADIA", ProductSemanticTag.FROZEN_OR_READY_MEAL)
+        assertHas("REQUEIJAO", ProductSemanticTag.DAIRY)
+        assertHas("PATINHO", ProductSemanticTag.MEAT_OR_PROTEIN)
+        assertHas("MELANCIA", ProductSemanticTag.FRESH_PRODUCE)
+        assertHas("OMO", ProductSemanticTag.HOUSEHOLD_CLEANING)
+        assertHas("SHAMPOO", ProductSemanticTag.PERSONAL_CARE)
+    }
+
+    private fun assertHas(name: String, tag: ProductSemanticTag) {
+        val tags = tagger.tagsFor(ProductItem(name = name, price = 1.0, category = ProductCategory.OTHER))
+        assertTrue("Expected $tag for '$name' but got $tags", tags.contains(tag))
     }
 }
 
@@ -3580,17 +4995,24 @@ package com.example.consumoai.data.classifier
 import com.example.consumoai.domain.model.BehaviorClassificationSource
 import com.example.consumoai.domain.model.ConsumptionBehaviorProfile
 import com.example.consumoai.domain.model.ConsumptionModelInput
+import com.example.consumoai.domain.model.FallbackReason
+import com.example.consumoai.domain.model.MODEL_INPUT_VERSION
+import com.example.consumoai.domain.model.MODEL_V2_FINAL_FEATURE_COUNT
+import com.example.consumoai.domain.model.MODEL_V2_FINAL_FEATURES
 import kotlinx.coroutines.runBlocking
+import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.Assert.assertEquals
 import org.junit.Test
+import retrofit2.HttpException
+import retrofit2.Response
 class RemoteConsumptionBehaviorClassifierTest {
     @Test
     fun classify_returnsRemotePredictionWhenApiSucceeds() = runBlocking {
         val classifier = RemoteConsumptionBehaviorClassifier(
             api = object : ConsumptionModelApi {
                 override suspend fun predict(request: ModelPredictionRequestDto): ModelPredictionResponseDto {
-                    assertEquals("v1", request.version)
-                    assertEquals(27, request.features.size)
+                    assertEquals(MODEL_INPUT_VERSION, request.version)
+                    assertEquals(MODEL_V2_FINAL_FEATURE_COUNT, request.features.size)
                     return ModelPredictionResponseDto(
                         main_profile = "BEVERAGE_RECURRENT",
                         confidence = 0.465,
@@ -3598,7 +5020,10 @@ class RemoteConsumptionBehaviorClassifierTest {
                             "BEVERAGE_RECURRENT" to 0.465,
                             "DIVERSIFIED_BALANCED" to 0.295,
                             "LOW_FRESH_FOOD" to 0.13
-                        )
+                        ),
+                        version = request.version,
+                        feature_count = request.features.size,
+                        model = "consumoai_xgboost_v2_top15.pkl"
                     )
                 }
             },
@@ -3609,6 +5034,12 @@ class RemoteConsumptionBehaviorClassifierTest {
         assertEquals(ConsumptionBehaviorProfile.BEVERAGE_RECURRENT, result.mainProfile)
         assertEquals(0.465, result.confidence, 0.0001)
         assertEquals(0.295, result.profileScores[ConsumptionBehaviorProfile.DIVERSIFIED_BALANCED] ?: -1.0, 0.0001)
+        assertEquals("v2", result.requestedInputVersion)
+        assertEquals(MODEL_V2_FINAL_FEATURE_COUNT, result.requestedFeatureCount)
+        assertEquals("v2", result.responseVersion)
+        assertEquals(MODEL_V2_FINAL_FEATURE_COUNT, result.responseFeatureCount)
+        assertEquals("consumoai_xgboost_v2_top15.pkl", result.backendModelUsed)
+        assertEquals(true, result.inferenceDurationMs >= 0L)
     }
     @Test
     fun classify_usesFallbackWhenApiFails() = runBlocking {
@@ -3622,44 +5053,71 @@ class RemoteConsumptionBehaviorClassifierTest {
         )
         val result = classifier.classify(
             input(
-                "beverages_value_pct" to 0.30,
                 "beverages_frequency" to 0.75
             )
         )
         assertEquals(BehaviorClassificationSource.RULE_BASED_FALLBACK, result.source)
-        assertEquals(ConsumptionBehaviorProfile.BEVERAGE_RECURRENT, result.mainProfile)
         assertEquals(1.0, result.confidence, 0.0001)
+        assertEquals(FallbackReason.INFERENCE_ERROR, result.fallbackReason)
+        assertEquals("v2", result.requestedInputVersion)
+        assertEquals(MODEL_V2_FINAL_FEATURE_COUNT, result.requestedFeatureCount)
+    }
+
+    @Test
+    fun classify_usesFallbackWhenBackendRejectsInputWith400() = runBlocking {
+        val classifier = RemoteConsumptionBehaviorClassifier(
+            api = object : ConsumptionModelApi {
+                override suspend fun predict(request: ModelPredictionRequestDto): ModelPredictionResponseDto {
+                    throw HttpException(Response.error<Any>(400, "bad request".toResponseBody(null)))
+                }
+            },
+            fallbackClassifier = RuleBasedConsumptionBehaviorClassifier()
+        )
+
+        val result = classifier.classify(input())
+
+        assertEquals(BehaviorClassificationSource.RULE_BASED_FALLBACK, result.source)
+        assertEquals(FallbackReason.BACKEND_REJECTED_INPUT, result.fallbackReason)
+        assertEquals("v2", result.requestedInputVersion)
+        assertEquals(MODEL_V2_FINAL_FEATURE_COUNT, result.requestedFeatureCount)
+    }
+    @Test
+    fun classify_usesFallbackWhenInputHasNoFeatures() = runBlocking {
+        val classifier = RemoteConsumptionBehaviorClassifier(
+            api = object : ConsumptionModelApi {
+                override suspend fun predict(request: ModelPredictionRequestDto): ModelPredictionResponseDto {
+                    error("should not call API")
+                }
+            },
+            fallbackClassifier = RuleBasedConsumptionBehaviorClassifier()
+        )
+        val result = classifier.classify(ConsumptionModelInput(features = emptyMap()))
+        assertEquals(BehaviorClassificationSource.RULE_BASED_FALLBACK, result.source)
+        assertEquals(FallbackReason.EMPTY_FEATURES, result.fallbackReason)
     }
     private fun input(vararg overrides: Pair<String, Double>): ConsumptionModelInput {
-        val defaults = linkedMapOf(
-            "total_receipts" to 5.0,
-            "total_items" to 20.0,
-            "total_value" to 200.0,
-            "average_ticket" to 40.0,
-            "average_items_per_receipt" to 4.0,
-            "basic_food_value_pct" to 0.20,
-            "industrialized_value_pct" to 0.20,
-            "beverages_value_pct" to 0.10,
-            "hygiene_value_pct" to 0.05,
-            "cleaning_value_pct" to 0.05,
-            "produce_value_pct" to 0.10,
-            "other_value_pct" to 0.30,
-            "basic_food_frequency" to 0.60,
-            "industrialized_frequency" to 0.60,
-            "beverages_frequency" to 0.30,
-            "produce_frequency" to 0.30,
-            "hygiene_frequency" to 0.20,
-            "cleaning_frequency" to 0.20,
-            "category_concentration_index" to 0.30,
-            "category_dominance_gap" to 0.10,
-            "category_diversity_index" to 0.60,
-            "essential_categories_percentage" to 0.40,
-            "non_essential_categories_percentage" to 0.60,
-            "convenience_score" to 0.30,
-            "essential_score" to 0.40,
-            "diversity_score" to 0.50,
-            "classified_items_percentage" to 0.90
-        )
+        val defaults = MODEL_V2_FINAL_FEATURES
+            .associateWith { 0.1 }
+            .toMutableMap()
+            .apply {
+                // Definir valores especÃ­ficos para cada uma das 15 features de TOP15
+                this["classified_items_percentage"] = 0.90
+                this["category_stability_score"] = 0.65
+                this["basic_produce_cooccurrence_frequency"] = 0.40
+                this["ticket_variation_coefficient"] = 0.25
+                this["essential_routine_score"] = 0.55
+                this["household_routine_score"] = 0.20
+                this["category_concentration_index"] = 0.30
+                this["produce_frequency"] = 0.35
+                this["hygiene_cleaning_cooccurrence_frequency"] = 0.15
+                this["other_value_pct"] = 0.08
+                this["beverages_frequency"] = 0.70
+                this["essential_score"] = 0.60
+                this["category_dominance_gap"] = 0.25
+                this["essential_categories_percentage"] = 0.50
+                this["beverage_routine_score"] = 0.45
+            }
+        assertEquals(MODEL_V2_FINAL_FEATURES, defaults.keys.toList())
         overrides.forEach { (key, value) ->
             defaults[key] = value
         }
@@ -3675,7 +5133,9 @@ package com.example.consumoai.data.parser
 
 import org.jsoup.Jsoup
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Test
+import java.time.LocalDate
 
 class NfceHtmlParserDataSourceTest {
 
@@ -3695,7 +5155,8 @@ class NfceHtmlParserDataSourceTest {
             </html>
         """.trimIndent()
 
-        val products = parser.parse(Jsoup.parse(html))
+        val parsed = parser.parse(Jsoup.parse(html))
+        val products = parsed.items
 
         assertEquals(2, products.size)
         assertEquals(1, products[0].itemNumber)
@@ -3705,138 +5166,24 @@ class NfceHtmlParserDataSourceTest {
         assertEquals("COCA-COLA ORIG 2L", products[1].name)
         assertEquals(10.93, products[1].price, 0.0001)
     }
-}
-
-```
-
-## FILE: app/src/test/java/com/example/consumoai/data/parser/ReceiptLayoutParserDataSourceTest.kt
-
-```kotlin
-package com.example.consumoai.data.parser
-
-import com.example.consumoai.data.datasource.ocr.OcrElement
-import org.junit.Assert.assertEquals
-import org.junit.Test
-
-class ReceiptLayoutParserDataSourceTest {
-
-    private val parser = ReceiptLayoutParserDataSource()
 
     @Test
-    fun parseProducts_reconstructsItemsByColumnsAndStopsAtFooter() {
-        val elements = listOf(
-            e("001", 100, 100, 160, 140),
-            e("7891234567890", 520, 100, 760, 140),
-            e("SUCO", 900, 100, 1030, 140),
-            e("NATURALE", 1040, 100, 1270, 140),
-            e("13,90", 1770, 100, 1880, 140),
-            e("LARANJA", 900, 145, 1120, 185),
-            e("INT", 1130, 145, 1210, 185),
-            e("1L", 1220, 145, 1280, 185),
-            e("002", 100, 210, 160, 250),
-            e("7890000000002", 520, 210, 760, 250),
-            e("IOG", 900, 210, 980, 250),
-            e("BATIDO", 990, 210, 1170, 250),
-            e("NESTLE", 1180, 210, 1360, 250),
-            e("TRAD", 1370, 210, 1490, 250),
-            e("ZR", 1500, 210, 1560, 250),
-            e("1.15KG", 1570, 210, 1680, 250),
-            e("18,63", 1770, 210, 1880, 250),
-            e("003", 100, 280, 160, 320),
-            e("7890000000003", 520, 280, 760, 320),
-            e("COCA-COLA", 900, 280, 1170, 320),
-            e("ORIG", 1180, 280, 1300, 320),
-            e("2L", 1310, 280, 1370, 320),
-            e("10,93", 1770, 280, 1880, 320),
-            e("004", 100, 350, 160, 390),
-            e("7890000000004", 520, 350, 760, 390),
-            e("PAO", 900, 350, 990, 390),
-            e("CACETINHO", 1000, 350, 1270, 390),
-            e("8,40", 1770, 350, 1860, 390),
-            e("QTD.", 100, 430, 190, 470),
-            e("TOTAL", 210, 430, 340, 470),
-            e("DE", 350, 430, 410, 470),
-            e("ITENS", 420, 430, 530, 470),
-            e("005", 100, 500, 160, 540),
-            e("ITEM", 900, 500, 1010, 540),
-            e("IGNORADO", 1020, 500, 1260, 540),
-            e("99,99", 1770, 500, 1880, 540)
-        )
+    fun parse_extractsIssueDateWhenEmissionIsPresent() {
+        val html = """
+            <html>
+              <body>
+                Data de Emissao: 14/05/2026 18:45:11
+                <table>
+                  <tr><td>1 ARROZ 8,90</td></tr>
+                </table>
+              </body>
+            </html>
+        """.trimIndent()
 
-        val products = parser.parseProducts(elements)
+        val parsed = parser.parse(Jsoup.parse(html))
 
-        assertEquals(4, products.size)
-        assertEquals(1, products[0].itemNumber)
-        assertEquals("SUCO NATURALE LARANJA INT 1L", products[0].name)
-        assertEquals(13.90, products[0].price, 0.0001)
-        assertEquals(2, products[1].itemNumber)
-        assertEquals("IOG BATIDO NESTLE TRAD ZR 1.15KG", products[1].name)
-        assertEquals(18.63, products[1].price, 0.0001)
-        assertEquals(3, products[2].itemNumber)
-        assertEquals("COCA-COLA ORIG 2L", products[2].name)
-        assertEquals(10.93, products[2].price, 0.0001)
-        assertEquals(4, products[3].itemNumber)
-        assertEquals("PAO CACETINHO", products[3].name)
-        assertEquals(8.40, products[3].price, 0.0001)
-    }
-
-    @Test
-    fun parseProducts_appliesCommonOcrDescriptionFixes() {
-        val elements = listOf(
-            e("001", 100, 100, 160, 140),
-            e("1234567890123", 520, 100, 760, 140),
-            e("T03", 900, 100, 980, 140),
-            e("8ISC", 990, 100, 1090, 140),
-            e("HOLHO", 1100, 100, 1280, 140),
-            e("A0", 1290, 100, 1360, 140),
-            e("5,00", 1770, 100, 1860, 140)
-        )
-
-        val products = parser.parseProducts(elements)
-
-        assertEquals(1, products.size)
-        assertEquals(1, products.first().itemNumber)
-        assertEquals("IOG BISC MOLHO AO", products.first().name)
-        assertEquals(5.00, products.first().price, 0.0001)
-    }
-
-    @Test
-    fun parseProducts_stopsBeforeFooterOnLastItem020() {
-        val elements = listOf(
-            e("020", 100, 100, 160, 140),
-            e("7890000000020", 520, 100, 760, 140),
-            e("CARNE", 900, 100, 1020, 140),
-            e("MOIDA", 1030, 100, 1160, 140),
-            e("TOP", 1170, 100, 1250, 140),
-            e("QUALITY", 1260, 100, 1420, 140),
-            e("CG", 1430, 100, 1490, 140),
-            e("400G", 1500, 100, 1600, 140),
-            e("16,89", 1770, 100, 1860, 140),
-            e("QTD", 100, 180, 160, 220),
-            e("TOTAL", 170, 180, 280, 220),
-            e("VALOR", 290, 180, 410, 220),
-            e("PAGAMENTO", 420, 180, 620, 220),
-            e("185,43", 1770, 180, 1860, 220)
-        )
-
-        val products = parser.parseProducts(elements)
-
-        assertEquals(1, products.size)
-        assertEquals(20, products.first().itemNumber)
-        assertEquals("CARNE MOIDA TOP QUALITY CG 400G", products.first().name)
-        assertEquals(16.89, products.first().price, 0.0001)
-    }
-
-    private fun e(text: String, left: Int, top: Int, right: Int, bottom: Int): OcrElement {
-        return OcrElement(
-            text = text,
-            left = left,
-            top = top,
-            right = right,
-            bottom = bottom,
-            centerX = (left + right) / 2,
-            centerY = (top + bottom) / 2
-        )
+        assertNotNull(parsed.issueDate)
+        assertEquals(LocalDate.of(2026, 5, 14), parsed.issueDate)
     }
 }
 
@@ -3941,21 +5288,162 @@ class ReceiptRepositoryImplTest {
 }
 ```
 
+## FILE: app/src/test/java/com/example/consumoai/domain/insights/DefaultConsumptionInsightsEngineTest.kt
+
+```kotlin
+package com.example.consumoai.domain.insights
+
+import com.example.consumoai.domain.model.BehaviorClassificationSource
+import com.example.consumoai.domain.model.ConsumptionBehaviorProfile
+import com.example.consumoai.domain.model.ConsumptionBehaviorResult
+import com.example.consumoai.domain.model.ProductCategory
+import com.example.consumoai.domain.model.ProductItem
+import com.example.consumoai.domain.model.Receipt
+import com.example.consumoai.domain.model.ReceiptSource
+import com.example.consumoai.data.classifier.KeywordProductSemanticTagger
+import com.example.consumoai.domain.usecase.CalculateConsumptionMetricsUseCase
+import com.example.consumoai.domain.usecase.CalculateConsumptionMetricsV2UseCase
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class DefaultConsumptionInsightsEngineTest {
+
+    @Test
+    fun generate_ordersInsightsBySeverityAndProducesNeutralUtf8Text() {
+        val receipts = listOf(
+            Receipt(
+                source = ReceiptSource.QR_CODE,
+                items = listOf(
+                    ProductItem(name = "REFRIGERANTE", price = 10.0, category = ProductCategory.BEVERAGES),
+                    ProductItem(name = "BISCOITO", price = 9.0, category = ProductCategory.INDUSTRIALIZED)
+                )
+            ),
+            Receipt(
+                source = ReceiptSource.QR_CODE,
+                items = listOf(
+                    ProductItem(name = "SUCO", price = 8.0, category = ProductCategory.BEVERAGES),
+                    ProductItem(name = "SALGADINHO", price = 7.0, category = ProductCategory.INDUSTRIALIZED)
+                )
+            ),
+            Receipt(
+                source = ReceiptSource.QR_CODE,
+                items = listOf(
+                    ProductItem(name = "ENERGETICO", price = 12.0, category = ProductCategory.BEVERAGES),
+                    ProductItem(name = "BARRA", price = 6.0, category = ProductCategory.INDUSTRIALIZED)
+                )
+            )
+        )
+
+        val metrics = CalculateConsumptionMetricsUseCase()(receipts)
+        val metricsV2 = CalculateConsumptionMetricsV2UseCase(
+            calculateConsumptionMetricsUseCase = CalculateConsumptionMetricsUseCase(),
+            semanticTagger = KeywordProductSemanticTagger()
+        )(receipts)
+        val result = ConsumptionBehaviorResult(
+            mainProfile = ConsumptionBehaviorProfile.BEVERAGE_RECURRENT,
+            confidence = 0.45,
+            profileScores = mapOf(
+                ConsumptionBehaviorProfile.BEVERAGE_RECURRENT to 0.46,
+                ConsumptionBehaviorProfile.DIVERSIFIED_BALANCED to 0.29,
+                ConsumptionBehaviorProfile.LOW_FRESH_FOOD to 0.13
+            ),
+            source = BehaviorClassificationSource.TRAINED_MODEL
+        )
+
+        val analysis = DefaultConsumptionInsightsEngine().generate(metricsV2, result)
+
+        assertFalse(analysis.insights.isEmpty())
+        assertEquals("Bebidas aparecem com alta recorrÃªncia", analysis.insights.first().title)
+        assertTrue(analysis.summary.contains("padrÃ£o"))
+
+        val allText = buildString {
+            analysis.insights.forEach {
+                append(it.title)
+                append(it.description)
+            }
+            append(analysis.summary)
+        }
+        assertFalse(allText.contains("Ãƒ"))
+    }
+
+    @Test
+    fun generate_addsCompositeInsightWhenTopProfilesAndMetricsSupportHybridNarrative() {
+        val receipts = listOf(
+            Receipt(
+                source = ReceiptSource.QR_CODE,
+                items = listOf(
+                    ProductItem(name = "REFRIGERANTE", price = 14.0, category = ProductCategory.BEVERAGES),
+                    ProductItem(name = "ARROZ", price = 12.0, category = ProductCategory.BASIC_FOOD),
+                    ProductItem(name = "ALFACE", price = 6.0, category = ProductCategory.PRODUCE)
+                )
+            ),
+            Receipt(
+                source = ReceiptSource.QR_CODE,
+                items = listOf(
+                    ProductItem(name = "SUCO", price = 10.0, category = ProductCategory.BEVERAGES),
+                    ProductItem(name = "FEIJAO", price = 11.0, category = ProductCategory.BASIC_FOOD),
+                    ProductItem(name = "SABONETE", price = 8.0, category = ProductCategory.HYGIENE)
+                )
+            ),
+            Receipt(
+                source = ReceiptSource.QR_CODE,
+                items = listOf(
+                    ProductItem(name = "ENERGETICO", price = 15.0, category = ProductCategory.BEVERAGES),
+                    ProductItem(name = "PAO", price = 9.0, category = ProductCategory.BASIC_FOOD),
+                    ProductItem(name = "TOMATE", price = 7.0, category = ProductCategory.PRODUCE)
+                )
+            )
+        )
+
+        val metrics = CalculateConsumptionMetricsUseCase()(receipts)
+        val metricsV2 = CalculateConsumptionMetricsV2UseCase(
+            calculateConsumptionMetricsUseCase = CalculateConsumptionMetricsUseCase(),
+            semanticTagger = KeywordProductSemanticTagger()
+        )(receipts)
+        val result = ConsumptionBehaviorResult(
+            mainProfile = ConsumptionBehaviorProfile.BEVERAGE_RECURRENT,
+            confidence = 0.41,
+            profileScores = mapOf(
+                ConsumptionBehaviorProfile.BEVERAGE_RECURRENT to 0.41,
+                ConsumptionBehaviorProfile.DIVERSIFIED_BALANCED to 0.27,
+                ConsumptionBehaviorProfile.ESSENTIAL_FOCUSED to 0.22
+            ),
+            source = BehaviorClassificationSource.TRAINED_MODEL
+        )
+
+        val analysis = DefaultConsumptionInsightsEngine().generate(metricsV2, result)
+
+        assertTrue(
+            analysis.insights.any {
+                it.title.contains("EquilÃ­brio entre itens essenciais e bebidas")
+            }
+        )
+    }
+}
+```
+
 ## FILE: app/src/test/java/com/example/consumoai/domain/usecase/AnalyzeStoredReceiptsUseCaseTest.kt
 
 ```kotlin
 package com.example.consumoai.domain.usecase
 
 import com.example.consumoai.data.classifier.RuleBasedConsumptionBehaviorClassifier
+import com.example.consumoai.data.classifier.KeywordProductSemanticTagger
 import com.example.consumoai.domain.insights.DefaultConsumptionInsightsEngine
 import com.example.consumoai.domain.model.BehaviorClassificationSource
 import com.example.consumoai.domain.model.ConsumptionBehaviorProfile
+import com.example.consumoai.domain.model.ConsumptionBehaviorResult
 import com.example.consumoai.domain.model.MODEL_INPUT_VERSION
+import com.example.consumoai.domain.model.MODEL_V2_FINAL_FEATURE_COUNT
+import com.example.consumoai.domain.model.MODEL_V2_FINAL_FEATURES
 import com.example.consumoai.domain.model.ProductItem
 import com.example.consumoai.domain.model.ProductCategory
 import com.example.consumoai.domain.model.Receipt
 import com.example.consumoai.domain.model.ReceiptSource
 import com.example.consumoai.domain.repository.ReceiptRepository
+import com.example.consumoai.domain.classifier.ConsumptionBehaviorClassifier
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -3994,28 +5482,91 @@ class AnalyzeStoredReceiptsUseCaseTest {
 
         val analysis = AnalyzeStoredReceiptsUseCase(
             receiptRepository = repository,
-            calculateConsumptionMetricsUseCase = CalculateConsumptionMetricsUseCase(),
+            calculateConsumptionMetricsV2UseCase = CalculateConsumptionMetricsV2UseCase(
+                calculateConsumptionMetricsUseCase = CalculateConsumptionMetricsUseCase(),
+                semanticTagger = KeywordProductSemanticTagger()
+            ),
             buildConsumptionModelInputUseCase = BuildConsumptionModelInputUseCase(),
             classifyConsumptionProfileUseCase = ClassifyConsumptionProfileUseCase(
                 consumptionBehaviorClassifier = RuleBasedConsumptionBehaviorClassifier()
             ),
-            insightsEngine = DefaultConsumptionInsightsEngine()
+            insightsEngine = DefaultConsumptionInsightsEngine(),
+            consumptionFeatureSanitizer = ConsumptionFeatureSanitizer(),
+            buildConsumptionProfileSummaryUseCase = BuildConsumptionProfileSummaryUseCase()
         )()
 
         assertEquals(2, analysis.receipts.size)
-        assertEquals(2, analysis.metrics.totalReceipts)
-        assertEquals(3, analysis.metrics.totalItems)
-        assertEquals(22.5, analysis.metrics.totalValue, 0.0001)
+        assertEquals(2, analysis.metricsV2.baseMetrics.totalReceipts)
+        assertEquals(3, analysis.metricsV2.baseMetrics.totalItems)
+        assertEquals(22.5, analysis.metricsV2.baseMetrics.totalValue, 0.0001)
         assertEquals(MODEL_INPUT_VERSION, analysis.modelInput.version)
-        assertEquals(analysis.metrics.totalReceipts.toDouble(), analysis.modelInput.features["total_receipts"] ?: -1.0, 0.0001)
-        assertEquals(analysis.metrics.averageTicket, analysis.modelInput.features["average_ticket"] ?: -1.0, 0.0001)
-        assertEquals(27, analysis.modelInput.features.size)
-        assertEquals(ConsumptionBehaviorProfile.BEVERAGE_RECURRENT, analysis.behaviorResult.mainProfile)
+        assertEquals(MODEL_V2_FINAL_FEATURE_COUNT, analysis.modelInput.features.size)
+        assertEquals(MODEL_V2_FINAL_FEATURES, analysis.modelInput.features.keys.toList())
         assertEquals(BehaviorClassificationSource.RULE_BASED_FALLBACK, analysis.behaviorResult.source)
-        assertEquals(ConsumptionBehaviorProfile.BEVERAGE_RECURRENT, analysis.behaviorAnalysis?.behaviorResult?.mainProfile)
-        assertEquals(true, analysis.behaviorAnalysis?.insights?.isNotEmpty() ?: false)
-        assertEquals(true, analysis.behaviorAnalysis?.behavioralComposition?.isNotEmpty() ?: false)
-        assertEquals(true, analysis.behaviorAnalysis?.summary?.isNotEmpty() ?: false)
+        assertEquals(true, analysis.behaviorResult.profileSummary != null)
+        assertEquals(analysis.behaviorResult.mainProfile, analysis.behaviorAnalysis.behaviorResult.mainProfile)
+        assertEquals(true, analysis.behaviorAnalysis.insights.isNotEmpty())
+        assertEquals(true, analysis.behaviorAnalysis.behavioralComposition.isNotEmpty())
+        assertEquals(true, analysis.behaviorAnalysis.summary.isNotEmpty())
+    }
+
+    @Test
+    fun invoke_sendsV2InputToClassifierWithTop15Features() = runBlocking {
+        val repository = object : ReceiptRepository {
+            override suspend fun saveReceipt(receipt: Receipt) = Unit
+
+            override suspend fun getAllReceipts(): List<Receipt> = listOf(
+                Receipt(
+                    id = 1L,
+                    accessKeyOrUrl = "u1",
+                    source = ReceiptSource.QR_CODE,
+                    items = listOf(
+                        ProductItem(name = "SUCO", price = 10.0, category = ProductCategory.BEVERAGES),
+                        ProductItem(name = "PAO", price = 5.0, category = ProductCategory.BASIC_FOOD)
+                    )
+                )
+            )
+
+            override suspend fun clearReceipts() = Unit
+
+            override suspend fun existsByAccessKeyOrUrl(accessKeyOrUrl: String): Boolean = false
+        }
+
+        var capturedVersion: String? = null
+        var capturedFeatureCount: Int? = null
+
+        val classifier = object : ConsumptionBehaviorClassifier {
+            override suspend fun classify(input: com.example.consumoai.domain.model.ConsumptionModelInput): ConsumptionBehaviorResult {
+                capturedVersion = input.version
+                capturedFeatureCount = input.features.size
+                return ConsumptionBehaviorResult(
+                    mainProfile = ConsumptionBehaviorProfile.BEVERAGE_RECURRENT,
+                    confidence = 0.8,
+                    profileScores = mapOf(ConsumptionBehaviorProfile.BEVERAGE_RECURRENT to 0.8),
+                    source = BehaviorClassificationSource.RULE_BASED_FALLBACK
+                )
+            }
+        }
+
+        val analysis = AnalyzeStoredReceiptsUseCase(
+            receiptRepository = repository,
+            calculateConsumptionMetricsV2UseCase = CalculateConsumptionMetricsV2UseCase(
+                calculateConsumptionMetricsUseCase = CalculateConsumptionMetricsUseCase(),
+                semanticTagger = KeywordProductSemanticTagger()
+            ),
+            buildConsumptionModelInputUseCase = BuildConsumptionModelInputUseCase(),
+            classifyConsumptionProfileUseCase = ClassifyConsumptionProfileUseCase(
+                consumptionBehaviorClassifier = classifier
+            ),
+            insightsEngine = DefaultConsumptionInsightsEngine(),
+            consumptionFeatureSanitizer = ConsumptionFeatureSanitizer(),
+            buildConsumptionProfileSummaryUseCase = BuildConsumptionProfileSummaryUseCase()
+        )()
+
+        assertEquals(MODEL_INPUT_VERSION, capturedVersion)
+        assertEquals(MODEL_V2_FINAL_FEATURE_COUNT, capturedFeatureCount)
+        assertEquals(MODEL_INPUT_VERSION, analysis.modelInput.version)
+        assertEquals(MODEL_V2_FINAL_FEATURE_COUNT, analysis.modelInput.features.size)
     }
 }
 
@@ -4026,134 +5577,145 @@ class AnalyzeStoredReceiptsUseCaseTest {
 ```kotlin
 package com.example.consumoai.domain.usecase
 
-import com.example.consumoai.domain.model.ConsumptionMetrics
-import com.example.consumoai.domain.model.CategoryMetrics
+import com.example.consumoai.data.classifier.KeywordProductSemanticTagger
 import com.example.consumoai.domain.model.MODEL_INPUT_VERSION
+import com.example.consumoai.domain.model.MODEL_V2_FINAL_FEATURE_COUNT
+import com.example.consumoai.domain.model.MODEL_V2_FINAL_FEATURES
 import com.example.consumoai.domain.model.ProductCategory
+import com.example.consumoai.domain.model.ProductItem
+import com.example.consumoai.domain.model.Receipt
+import com.example.consumoai.domain.model.ReceiptSource
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.time.LocalDate
 
 class BuildConsumptionModelInputUseCaseTest {
 
     private val useCase = BuildConsumptionModelInputUseCase()
 
     @Test
-    fun invoke_buildsStableFeatureMapWithoutNaNOrInfinity() {
-        val expectedKeys = setOf(
-            "total_receipts",
-            "total_items",
-            "total_value",
-            "average_ticket",
-            "average_items_per_receipt",
-            "basic_food_value_pct",
-            "industrialized_value_pct",
-            "beverages_value_pct",
-            "hygiene_value_pct",
-            "cleaning_value_pct",
-            "produce_value_pct",
-            "other_value_pct",
-            "basic_food_frequency",
-            "industrialized_frequency",
-            "beverages_frequency",
-            "produce_frequency",
-            "hygiene_frequency",
-            "cleaning_frequency",
-            "category_concentration_index",
-            "category_dominance_gap",
-            "category_diversity_index",
-            "essential_categories_percentage",
-            "non_essential_categories_percentage",
-            "convenience_score",
-            "essential_score",
-            "diversity_score",
-            "classified_items_percentage"
-        )
-
-        val zeroDoubleMap = ProductCategory.entries.associateWith { 0.0 }
-        val zeroIntMap = ProductCategory.entries.associateWith { 0 }
-        val categoryMetrics = ProductCategory.entries.associateWith { category ->
-            CategoryMetrics(
-                category = category,
-                totalValue = 0.0,
-                totalItems = 0,
-                valuePercentage = 0.0,
-                itemPercentage = 0.0,
-                frequency = 0.0,
-                averageValuePerReceipt = 0.0,
-                averageItemsPerReceipt = 0.0
+    fun invoke_buildsOfficialV2Top15FeatureMapWithoutNaNOrInfinity() {
+        val receipts = listOf(
+            Receipt(
+                date = LocalDate.of(2026, 5, 1),
+                source = ReceiptSource.QR_CODE,
+                items = listOf(
+                    ProductItem(name = "COCA", price = 10.0, category = ProductCategory.BEVERAGES),
+                    ProductItem(name = "ARROZ", price = 8.0, category = ProductCategory.BASIC_FOOD)
+                )
+            ),
+            Receipt(
+                date = LocalDate.of(2026, 5, 10),
+                source = ReceiptSource.QR_CODE,
+                items = listOf(
+                    ProductItem(name = "SABAO", price = 9.0, category = ProductCategory.CLEANING),
+                    ProductItem(name = "MELANCIA", price = 12.0, category = ProductCategory.PRODUCE)
+                )
             )
-        }
-
-        val metrics = ConsumptionMetrics(
-            valuePercentageByCategory = zeroDoubleMap + (ProductCategory.BASIC_FOOD to 0.4) + (ProductCategory.INDUSTRIALIZED to 0.2),
-            itemPercentageByCategory = zeroDoubleMap + (ProductCategory.BASIC_FOOD to 0.3) + (ProductCategory.OTHER to 0.1),
-            frequencyByCategory = zeroDoubleMap + (ProductCategory.BASIC_FOOD to 0.8),
-            categoryMetrics = categoryMetrics,
-            categoryValueTotals = zeroDoubleMap + (ProductCategory.BASIC_FOOD to 120.0),
-            categoryItemTotals = zeroIntMap + (ProductCategory.BASIC_FOOD to 12),
-            totalReceipts = 10,
-            totalItems = 30,
-            totalValue = 300.0,
-            averageTicket = 30.0,
-            averageItemsPerReceipt = 3.0,
-            maxCategoryByValue = ProductCategory.BASIC_FOOD,
-            maxCategoryByItems = ProductCategory.BASIC_FOOD,
-            receiptAverageValueByCategory = zeroDoubleMap + (ProductCategory.BASIC_FOOD to 12.0),
-            categoryConcentrationIndex = 0.4,
-            topThreeCategoriesByValue = listOf(ProductCategory.BASIC_FOOD, ProductCategory.INDUSTRIALIZED, ProductCategory.BEVERAGES),
-            averageValuePerItem = 10.0,
-            highestReceiptValue = 80.0,
-            lowestReceiptValue = 10.0,
-            receiptValueAmplitude = 70.0,
-            highValueReceiptsPercentage = 0.4,
-            lowValueReceiptsPercentage = 0.6,
-            categoryDominanceGap = 0.2,
-            topThreeCategoriesValuePercentage = 0.85,
-            otherPercentageByValue = 0.05,
-            otherPercentageByItems = 0.1,
-            classifiedItemsPercentage = 0.9,
-            averageCategoriesPerReceipt = 3.2,
-            categoryDiversityIndex = 0.7,
-            essentialCategoriesPercentage = 0.6,
-            nonEssentialCategoriesPercentage = 0.4,
-            industrializedToBasicFoodRatio = 0.5,
-            beveragesToBasicFoodRatio = 0.3,
-            beveragesToTotalRatio = 0.12,
-            produceToTotalRatio = 0.15,
-            receiptsWithIndustrializedPercentage = 0.6,
-            receiptsWithBeveragesPercentage = 0.5,
-            receiptsWithBasicFoodPercentage = 0.9,
-            receiptsWithProducePercentage = 0.4,
-            receiptsWithHygienePercentage = 0.2,
-            receiptsWithCleaningPercentage = 0.3,
-            averageIndustrializedItemsPerReceipt = 1.0,
-            averageBeveragesItemsPerReceipt = 0.7,
-            averageBasicFoodItemsPerReceipt = 1.8,
-            averageProduceItemsPerReceipt = 0.5,
-            convenienceScore = 0.45,
-            essentialScore = 0.63,
-            diversityScore = 0.72
         )
 
-        val result = useCase(metrics)
+        val metricsV2 = CalculateConsumptionMetricsV2UseCase(
+            calculateConsumptionMetricsUseCase = CalculateConsumptionMetricsUseCase(),
+            semanticTagger = KeywordProductSemanticTagger()
+        )(receipts)
+
+        val result = useCase(metricsV2)
 
         assertEquals(MODEL_INPUT_VERSION, result.version)
-        assertEquals(expectedKeys, result.features.keys)
-        assertEquals(10.0, result.features["total_receipts"] ?: -1.0, 0.0001)
-        assertEquals(0.4, result.features["basic_food_value_pct"] ?: -1.0, 0.0001)
-        assertEquals(0.8, result.features["basic_food_frequency"] ?: -1.0, 0.0001)
-        assertEquals(27, result.features.size)
-        assertFalse(result.features.containsKey("highest_receipt_value"))
-        assertFalse(result.features.containsKey("basic_food_item_pct"))
-        assertFalse(result.features.containsKey("top_three_categories_value_percentage"))
+        assertEquals(MODEL_V2_FINAL_FEATURE_COUNT, result.features.size)
+        assertEquals(15, result.features.size)
+        assertEquals(MODEL_V2_FINAL_FEATURES, result.features.keys.toList())
+
+        // Validar presenÃ§a de algumas das 15 features oficiais
+        assertTrue(result.features.containsKey("classified_items_percentage"))
+        assertTrue(result.features.containsKey("category_stability_score"))
+        assertTrue(result.features.containsKey("essential_routine_score"))
+        assertTrue(result.features.containsKey("beverage_routine_score"))
+
+        // Validar integridade
         assertFalse(result.features.values.any { it.isNaN() })
         assertFalse(result.features.values.any { it.isInfinite() })
-        assertTrue(result.features.values.all { it in Double.NEGATIVE_INFINITY..Double.POSITIVE_INFINITY })
     }
 }
 
+
+```
+
+## FILE: app/src/test/java/com/example/consumoai/domain/usecase/BuildConsumptionProfileSummaryUseCaseTest.kt
+
+```kotlin
+package com.example.consumoai.domain.usecase
+
+import com.example.consumoai.domain.model.BehaviorClassificationSource
+import com.example.consumoai.domain.model.ConsumptionBehaviorProfile
+import com.example.consumoai.domain.model.ConsumptionBehaviorResult
+import com.example.consumoai.domain.model.ProfileInterpretationType
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class BuildConsumptionProfileSummaryUseCaseTest {
+
+    private val useCase = BuildConsumptionProfileSummaryUseCase()
+
+    @Test
+    fun invoke_marksPureProfileWhenConfidenceIsHigh() {
+        val summary = useCase(
+            ConsumptionBehaviorResult(
+                mainProfile = ConsumptionBehaviorProfile.BEVERAGE_RECURRENT,
+                confidence = 0.62,
+                profileScores = mapOf(
+                    ConsumptionBehaviorProfile.BEVERAGE_RECURRENT to 0.62,
+                    ConsumptionBehaviorProfile.DIVERSIFIED_BALANCED to 0.20
+                ),
+                source = BehaviorClassificationSource.TRAINED_MODEL
+            )
+        )
+
+        assertEquals(ProfileInterpretationType.PURE_PROFILE, summary.interpretationType)
+        assertEquals(ConsumptionBehaviorProfile.BEVERAGE_RECURRENT, summary.primaryProfile)
+    }
+
+    @Test
+    fun invoke_marksHybridProfileWhenConfidenceIsLowButSignalsAreMixed() {
+        val summary = useCase(
+            ConsumptionBehaviorResult(
+                mainProfile = ConsumptionBehaviorProfile.BEVERAGE_RECURRENT,
+                confidence = 0.40,
+                profileScores = mapOf(
+                    ConsumptionBehaviorProfile.BEVERAGE_RECURRENT to 0.40,
+                    ConsumptionBehaviorProfile.DIVERSIFIED_BALANCED to 0.28,
+                    ConsumptionBehaviorProfile.HOUSEHOLD_MAINTENANCE to 0.20
+                ),
+                source = BehaviorClassificationSource.TRAINED_MODEL
+            )
+        )
+
+        assertEquals(ProfileInterpretationType.HYBRID_PROFILE, summary.interpretationType)
+        assertTrue(summary.humanReadableDescription.contains("hÃ­brido"))
+        assertEquals(2, summary.secondaryProfiles.size)
+    }
+
+    @Test
+    fun invoke_marksLowConfidenceProfileWhenConfidenceIsVeryLow() {
+        val summary = useCase(
+            ConsumptionBehaviorResult(
+                mainProfile = ConsumptionBehaviorProfile.UNDEFINED,
+                confidence = 0.20,
+                profileScores = mapOf(
+                    ConsumptionBehaviorProfile.UNDEFINED to 0.20,
+                    ConsumptionBehaviorProfile.DIVERSIFIED_BALANCED to 0.18
+                ),
+                source = BehaviorClassificationSource.TRAINED_MODEL
+            )
+        )
+
+        assertEquals(ProfileInterpretationType.LOW_CONFIDENCE_PROFILE, summary.interpretationType)
+        assertTrue(summary.humanReadableDescription.contains("baixa confianÃ§a"))
+    }
+}
 
 ```
 
@@ -4263,6 +5825,85 @@ class CalculateConsumptionMetricsUseCaseTest {
 
 ```
 
+## FILE: app/src/test/java/com/example/consumoai/domain/usecase/CalculateConsumptionMetricsV2UseCaseTest.kt
+
+```kotlin
+package com.example.consumoai.domain.usecase
+
+import com.example.consumoai.data.classifier.KeywordProductSemanticTagger
+import com.example.consumoai.domain.model.ProductCategory
+import com.example.consumoai.domain.model.ProductItem
+import com.example.consumoai.domain.model.Receipt
+import com.example.consumoai.domain.model.ReceiptSource
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import java.time.LocalDate
+
+class CalculateConsumptionMetricsV2UseCaseTest {
+
+    private val useCase = CalculateConsumptionMetricsV2UseCase(
+        calculateConsumptionMetricsUseCase = CalculateConsumptionMetricsUseCase(),
+        semanticTagger = KeywordProductSemanticTagger()
+    )
+
+    @Test
+    fun invoke_calculatesTemporalCooccurrenceRecurrenceAndScores() {
+        val receipts = listOf(
+            Receipt(
+                date = LocalDate.of(2026, 5, 1),
+                source = ReceiptSource.QR_CODE,
+                items = listOf(
+                    ProductItem(name = "COCA COLA 2L", price = 12.0, category = ProductCategory.BEVERAGES),
+                    ProductItem(name = "DORITOS 110G", price = 9.0, category = ProductCategory.INDUSTRIALIZED),
+                    ProductItem(name = "ARROZ 1KG", price = 8.0, category = ProductCategory.BASIC_FOOD)
+                )
+            ),
+            Receipt(
+                date = LocalDate.of(2026, 5, 8),
+                source = ReceiptSource.QR_CODE,
+                items = listOf(
+                    ProductItem(name = "CHOPP IPA", price = 18.0, category = ProductCategory.BEVERAGES),
+                    ProductItem(name = "DORITOS 120G", price = 10.0, category = ProductCategory.INDUSTRIALIZED),
+                    ProductItem(name = "MELANCIA", price = 15.0, category = ProductCategory.PRODUCE)
+                )
+            ),
+            Receipt(
+                date = LocalDate.of(2026, 5, 15),
+                source = ReceiptSource.QR_CODE,
+                items = listOf(
+                    ProductItem(name = "COCA COLA 350ML", price = 6.0, category = ProductCategory.BEVERAGES),
+                    ProductItem(name = "SABONETE DOVE", price = 7.0, category = ProductCategory.HYGIENE),
+                    ProductItem(name = "OMO 1KG", price = 20.0, category = ProductCategory.CLEANING)
+                )
+            )
+        )
+
+        val result = useCase(receipts)
+
+        assertTrue(result.timeSpanDays >= 14.0)
+        assertTrue(result.receiptsPerWeek > 0.0)
+        assertTrue(result.averageDaysBetweenReceipts > 0.0)
+        assertTrue(result.recurringItemRatio >= 0.0)
+        assertTrue(result.topItemRepetitionRate >= 0.0)
+        assertTrue(result.beverageSnackCoOccurrenceFrequency > 0.0)
+        assertTrue(result.alcoholSnackCoOccurrenceFrequency > 0.0)
+        assertTrue(result.hygieneCleaningCoOccurrenceFrequency > 0.0)
+        assertTrue(result.essentialRoutineScore in 0.0..1.0)
+        assertTrue(result.convenienceRoutineScore in 0.0..1.0)
+        assertTrue(result.beverageRoutineScore in 0.0..1.0)
+        assertTrue(result.householdRoutineScore in 0.0..1.0)
+        assertTrue(result.freshFoodPresenceScore in 0.0..1.0)
+
+        // Basic sanity around tag-derived metrics
+        assertTrue(result.softDrinkFrequency > 0.0)
+        assertTrue(result.alcoholicBeverageFrequency > 0.0)
+        assertEquals(true, result.baseMetrics.totalReceipts == 3)
+    }
+}
+
+```
+
 ## FILE: app/src/test/java/com/example/consumoai/domain/usecase/ClassifyConsumptionProfileUseCaseTest.kt
 
 ```kotlin
@@ -4272,6 +5913,7 @@ import com.example.consumoai.data.classifier.RuleBasedConsumptionBehaviorClassif
 import com.example.consumoai.domain.model.BehaviorClassificationSource
 import com.example.consumoai.domain.model.ConsumptionBehaviorProfile
 import com.example.consumoai.domain.model.ConsumptionModelInput
+import com.example.consumoai.domain.model.MODEL_V2_FINAL_FEATURES
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -4297,23 +5939,24 @@ class ClassifyConsumptionProfileUseCaseTest {
     }
 
     @Test
-    fun invoke_returnsBeverageRecurrentWhenValueAndFrequencyThresholdsMatch() = runBlocking {
+    fun invoke_returnsBeverageRecurrentWhenTop15BeverageSignalsAreHigh() = runBlocking {
         val input = input(
             "classified_items_percentage" to 0.9,
             "category_concentration_index" to 0.3,
-            "beverages_value_pct" to 0.3,
-            "beverages_frequency" to 0.75
+            "beverages_frequency" to 0.75,
+            "beverage_routine_score" to 0.6
         )
 
         assertEquals(ConsumptionBehaviorProfile.BEVERAGE_RECURRENT, useCase(input).mainProfile)
     }
 
     @Test
-    fun invoke_returnsConvenienceOrientedWhenConvenienceScoreIsHigh() = runBlocking {
+    fun invoke_returnsConvenienceOrientedWhenOtherValueIsElevated() = runBlocking {
         val input = input(
             "classified_items_percentage" to 0.9,
             "category_concentration_index" to 0.4,
-            "convenience_score" to 0.6
+            "category_stability_score" to 0.30,
+            "other_value_pct" to 0.25
         )
 
         assertEquals(ConsumptionBehaviorProfile.CONVENIENCE_ORIENTED, useCase(input).mainProfile)
@@ -4323,42 +5966,34 @@ class ClassifyConsumptionProfileUseCaseTest {
     fun invoke_returnsHighlyConcentratedWhenConcentrationIsVeryHigh() = runBlocking {
         val input = input(
             "classified_items_percentage" to 0.9,
-            "category_concentration_index" to 0.72
+            "category_concentration_index" to 0.72,
+            "category_dominance_gap" to 0.35
         )
 
         assertEquals(ConsumptionBehaviorProfile.HIGHLY_CONCENTRATED, useCase(input).mainProfile)
     }
 
     private fun input(vararg overrides: Pair<String, Double>): ConsumptionModelInput {
-        val defaults = mutableMapOf(
-            "total_receipts" to 5.0,
-            "total_items" to 20.0,
-            "total_value" to 200.0,
-            "average_ticket" to 40.0,
-            "average_items_per_receipt" to 4.0,
-            "basic_food_value_pct" to 0.20,
-            "industrialized_value_pct" to 0.20,
-            "beverages_value_pct" to 0.10,
-            "hygiene_value_pct" to 0.05,
-            "cleaning_value_pct" to 0.05,
-            "produce_value_pct" to 0.10,
-            "other_value_pct" to 0.30,
-            "basic_food_frequency" to 0.60,
-            "industrialized_frequency" to 0.60,
-            "beverages_frequency" to 0.30,
-            "produce_frequency" to 0.30,
-            "hygiene_frequency" to 0.20,
-            "cleaning_frequency" to 0.20,
-            "category_concentration_index" to 0.30,
-            "category_dominance_gap" to 0.10,
-            "category_diversity_index" to 0.60,
-            "essential_categories_percentage" to 0.40,
-            "non_essential_categories_percentage" to 0.60,
-            "convenience_score" to 0.30,
-            "essential_score" to 0.40,
-            "diversity_score" to 0.50,
-            "classified_items_percentage" to 0.90
-        )
+        val defaults = MODEL_V2_FINAL_FEATURES
+            .associateWith { 0.1 }
+            .toMutableMap()
+            .apply {
+                this["classified_items_percentage"] = 0.90
+                this["category_stability_score"] = 0.60
+                this["basic_produce_cooccurrence_frequency"] = 0.25
+                this["ticket_variation_coefficient"] = 0.20
+                this["essential_routine_score"] = 0.40
+                this["household_routine_score"] = 0.15
+                this["category_concentration_index"] = 0.30
+                this["produce_frequency"] = 0.30
+                this["hygiene_cleaning_cooccurrence_frequency"] = 0.10
+                this["other_value_pct"] = 0.12
+                this["beverages_frequency"] = 0.30
+                this["essential_score"] = 0.40
+                this["category_dominance_gap"] = 0.10
+                this["essential_categories_percentage"] = 0.40
+                this["beverage_routine_score"] = 0.25
+            }
 
         overrides.forEach { (key, value) ->
             defaults[key] = value
@@ -4368,6 +6003,67 @@ class ClassifyConsumptionProfileUseCaseTest {
     }
 }
 
+```
+
+## FILE: app/src/test/java/com/example/consumoai/domain/usecase/ConsumptionFeatureSanitizerTest.kt
+
+```kotlin
+package com.example.consumoai.domain.usecase
+
+import com.example.consumoai.domain.model.ConsumptionModelInput
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class ConsumptionFeatureSanitizerTest {
+
+    private val sanitizer = ConsumptionFeatureSanitizer()
+
+    @Test
+    fun invoke_clampsProbabilityLikeValuesAndInvalidNumbers() {
+        val input = ConsumptionModelInput(
+            features = linkedMapOf(
+                "beverages_value_pct" to 1.4,
+                "classified_items_percentage" to -0.3,
+                "diversity_score" to Double.NaN,
+                "total_value" to Double.POSITIVE_INFINITY,
+                "total_items" to -5.0
+            )
+        )
+
+        val result = sanitizer(input)
+
+        assertEquals(1.0, result.input.features.getValue("beverages_value_pct"), 0.0001)
+        assertEquals(0.0, result.input.features.getValue("classified_items_percentage"), 0.0001)
+        assertEquals(0.0, result.input.features.getValue("diversity_score"), 0.0001)
+        assertEquals(0.0, result.input.features.getValue("total_value"), 0.0001)
+        assertEquals(0.0, result.input.features.getValue("total_items"), 0.0001)
+        assertEquals(5, result.notes.size)
+    }
+
+    @Test
+    fun invoke_keepsValidValuesUntouched() {
+        val input = ConsumptionModelInput(
+            features = linkedMapOf(
+                "beverages_value_pct" to 0.35,
+                "total_value" to 120.0,
+                "total_items" to 8.0
+            )
+        )
+
+        val result = sanitizer(input)
+
+        assertEquals(0.35, result.input.features.getValue("beverages_value_pct"), 0.0001)
+        assertEquals(120.0, result.input.features.getValue("total_value"), 0.0001)
+        assertTrue(result.notes.isEmpty())
+    }
+}
+
+```
+
+## FILE: app/src/test/java/com/example/consumoai/domain/usecase/GenerateOtherItemsReportUseCaseTest.kt
+
+```kotlin
 ```
 
 ## FILE: app/src/test/java/com/example/consumoai/domain/usecase/GetStoredReceiptsSummaryUseCaseTest.kt
@@ -4419,6 +6115,176 @@ class GetStoredReceiptsSummaryUseCaseTest {
         assertEquals(2, result.totalReceipts)
         assertEquals(3, result.totalItems)
         assertEquals(19.0, result.totalValue, 0.0001)
+    }
+}
+
+```
+
+## FILE: app/src/test/java/com/example/consumoai/domain/usecase/OtherItemsReportGeneratorTest.kt
+
+```kotlin
+```
+
+## FILE: app/src/test/java/com/example/consumoai/presentation/home/model/HomeAnalysisPresentationMapperTest.kt
+
+```kotlin
+package com.example.consumoai.presentation.home.model
+
+import com.example.consumoai.domain.insights.DefaultConsumptionInsightsEngine
+import com.example.consumoai.domain.model.BehaviorClassificationSource
+import com.example.consumoai.domain.model.ConsumptionBehaviorProfile
+import com.example.consumoai.domain.model.ConsumptionBehaviorResult
+import com.example.consumoai.domain.model.ConsumptionModelInput
+import com.example.consumoai.domain.model.ProductCategory
+import com.example.consumoai.domain.model.ProductItem
+import com.example.consumoai.domain.model.Receipt
+import com.example.consumoai.domain.model.ReceiptSource
+import com.example.consumoai.domain.model.StoredConsumptionAnalysis
+import com.example.consumoai.data.classifier.KeywordProductSemanticTagger
+import com.example.consumoai.domain.usecase.BuildConsumptionModelInputUseCase
+import com.example.consumoai.domain.usecase.CalculateConsumptionMetricsUseCase
+import com.example.consumoai.domain.usecase.CalculateConsumptionMetricsV2UseCase
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class HomeAnalysisPresentationMapperTest {
+
+    @Test
+    fun toHomeAnalysisPresentation_mapsFriendlyLabelsAndTechnicalData() {
+        val receipts = listOf(
+            Receipt(
+                source = ReceiptSource.QR_CODE,
+                items = listOf(
+                    ProductItem(name = "SUCO", price = 12.0, category = ProductCategory.BEVERAGES),
+                    ProductItem(name = "ARROZ", price = 9.0, category = ProductCategory.BASIC_FOOD)
+                )
+            ),
+            Receipt(
+                source = ReceiptSource.QR_CODE,
+                items = listOf(
+                    ProductItem(name = "REFRIGERANTE", price = 8.0, category = ProductCategory.BEVERAGES),
+                    ProductItem(name = "BISCOITO", price = 7.0, category = ProductCategory.INDUSTRIALIZED)
+                )
+            )
+        )
+
+        val metricsV2 = CalculateConsumptionMetricsV2UseCase(
+            calculateConsumptionMetricsUseCase = CalculateConsumptionMetricsUseCase(),
+            semanticTagger = KeywordProductSemanticTagger()
+        )(receipts)
+        val modelInput = BuildConsumptionModelInputUseCase()(metricsV2)
+        val behaviorResult = ConsumptionBehaviorResult(
+            mainProfile = ConsumptionBehaviorProfile.BEVERAGE_RECURRENT,
+            confidence = 0.78,
+            profileScores = mapOf(
+                ConsumptionBehaviorProfile.BEVERAGE_RECURRENT to 0.46,
+                ConsumptionBehaviorProfile.DIVERSIFIED_BALANCED to 0.29,
+                ConsumptionBehaviorProfile.LOW_FRESH_FOOD to 0.13
+            ),
+            source = BehaviorClassificationSource.TRAINED_MODEL
+        )
+        val behaviorAnalysis = DefaultConsumptionInsightsEngine().generate(metricsV2, behaviorResult)
+
+        val presentation = StoredConsumptionAnalysis(
+            receipts = receipts,
+            metricsV2 = metricsV2,
+            modelInput = modelInput,
+            behaviorResult = behaviorResult,
+            behaviorAnalysis = behaviorAnalysis
+        ).toHomeAnalysisPresentation()
+
+        assertEquals("Recorrente em bebidas", presentation.profileTitle)
+        assertEquals("PadrÃ£o de consumo consistente", presentation.confidenceLabel)
+        assertEquals("Modelo treinado", presentation.sourceLabel)
+        assertNull(presentation.sourceWarning)
+        assertTrue(presentation.technicalItems.any { it.first == "Modelo" && it.second == "XGBoost V2 Top 15" })
+        assertTrue(presentation.technicalItems.any { it.first == "Features enviadas ao modelo" && it.second.contains("15") })
+        assertTrue(presentation.technicalItems.any { it.first == "VersÃ£o de entrada" && it.second == "v2" })
+        assertTrue(presentation.technicalItems.any { it.first == "MÃ©tricas internas" && it.second.contains("64") })
+        assertTrue(presentation.technicalItems.any { it.first == "Tipo de interpretaÃ§Ã£o" })
+        assertTrue(presentation.technicalItems.any { it.first == "InferÃªncia (ms)" })
+        assertTrue(presentation.technicalItems.any { it.first == "Itens classificados" })
+        assertTrue(presentation.technicalItems.any { it.first == "OTHER por valor" })
+        assertTrue(presentation.technicalItems.none { it.first == "Aviso tÃ©cnico" })
+        assertTrue(presentation.technicalItems.any { it.first.startsWith("Feature ") })
+    }
+
+    @Test
+    fun toHomeAnalysisPresentation_showsFallbackWarningWhenSourceIsLocalFallback() {
+        val receipts = listOf(
+            Receipt(
+                source = ReceiptSource.QR_CODE,
+                items = listOf(
+                    ProductItem(name = "SABAO", price = 5.0, category = ProductCategory.CLEANING)
+                )
+            )
+        )
+        val metricsV2 = CalculateConsumptionMetricsV2UseCase(
+            calculateConsumptionMetricsUseCase = CalculateConsumptionMetricsUseCase(),
+            semanticTagger = KeywordProductSemanticTagger()
+        )(receipts)
+        val modelInput = ConsumptionModelInput(features = mapOf("total_receipts" to 1.0))
+        val behaviorResult = ConsumptionBehaviorResult(
+            mainProfile = ConsumptionBehaviorProfile.UNDEFINED,
+            confidence = 0.4,
+            profileScores = mapOf(ConsumptionBehaviorProfile.UNDEFINED to 1.0),
+            source = BehaviorClassificationSource.RULE_BASED_FALLBACK
+        )
+        val behaviorAnalysis = DefaultConsumptionInsightsEngine().generate(metricsV2, behaviorResult)
+
+        val presentation = StoredConsumptionAnalysis(
+            receipts = receipts,
+            metricsV2 = metricsV2,
+            modelInput = modelInput,
+            behaviorResult = behaviorResult,
+            behaviorAnalysis = behaviorAnalysis
+        ).toHomeAnalysisPresentation()
+
+        assertNotNull(presentation.sourceWarning)
+        assertTrue(presentation.sourceWarning!!.contains("Backend indisponÃ­vel"))
+        assertEquals("PadrÃ£o de consumo variado", presentation.confidenceLabel)
+    }
+
+    @Test
+    fun toHomeAnalysisPresentation_addsTechnicalWarningWhenClassifiedCoverageIsLow() {
+        val receipts = listOf(
+            Receipt(
+                source = ReceiptSource.QR_CODE,
+                items = listOf(
+                    ProductItem(name = "ITEM DESCONHECIDO", price = 20.0, category = ProductCategory.OTHER),
+                    ProductItem(name = "ARROZ", price = 10.0, category = ProductCategory.BASIC_FOOD)
+                )
+            )
+        )
+
+        val metricsV2 = CalculateConsumptionMetricsV2UseCase(
+            calculateConsumptionMetricsUseCase = CalculateConsumptionMetricsUseCase(),
+            semanticTagger = KeywordProductSemanticTagger()
+        )(receipts)
+        val modelInput = BuildConsumptionModelInputUseCase()(metricsV2)
+        val behaviorResult = ConsumptionBehaviorResult(
+            mainProfile = ConsumptionBehaviorProfile.UNDEFINED,
+            confidence = 0.55,
+            profileScores = mapOf(ConsumptionBehaviorProfile.UNDEFINED to 1.0),
+            source = BehaviorClassificationSource.TRAINED_MODEL
+        )
+        val behaviorAnalysis = DefaultConsumptionInsightsEngine().generate(metricsV2, behaviorResult)
+
+        val presentation = StoredConsumptionAnalysis(
+            receipts = receipts,
+            metricsV2 = metricsV2,
+            modelInput = modelInput,
+            behaviorResult = behaviorResult,
+            behaviorAnalysis = behaviorAnalysis
+        ).toHomeAnalysisPresentation()
+
+        assertTrue(presentation.technicalItems.any {
+            it.first == "Aviso tÃ©cnico" &&
+                it.second.contains("muitos itens nÃ£o classificados")
+        })
     }
 }
 

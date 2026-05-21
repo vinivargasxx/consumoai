@@ -7,7 +7,8 @@ import com.example.consumoai.domain.model.ConsumptionBehaviorResult
 import com.example.consumoai.domain.model.ConsumptionModelInput
 
 /**
- * Temporary rule-based implementation until a trained model replaces it.
+ * Fallback local usado apenas quando o backend treinado não está disponível.
+ * O fluxo principal permanece no classificador remoto (XGBoost Beverage Split Top 15).
  */
 @Suppress("unused")
 class RuleBasedConsumptionBehaviorClassifier : ConsumptionBehaviorClassifier {
@@ -23,30 +24,37 @@ class RuleBasedConsumptionBehaviorClassifier : ConsumptionBehaviorClassifier {
     }
 
     internal fun classifyProfile(input: ConsumptionModelInput): ConsumptionBehaviorProfile {
-        val totalReceipts = input.feature("total_receipts")
         val classifiedItemsPercentage = input.feature("classified_items_percentage")
+        val nonAlcoholicBeverageSnackCoOccurrence = input.feature("non_alcoholic_beverage_snack_cooccurrence_frequency")
         val categoryConcentrationIndex = input.feature("category_concentration_index")
-        val convenienceScore = input.feature("convenience_score")
-        val essentialScore = input.feature("essential_score")
-        val diversityScore = input.feature("diversity_score")
-        val nonEssentialPercentage = input.feature("non_essential_categories_percentage")
-        val beveragesValuePercentage = input.feature("beverages_value_pct")
-        val beveragesFrequency = input.feature("beverages_frequency")
-        val produceValuePercentage = input.feature("produce_value_pct")
+        val essentialRoutineScore = input.feature("essential_routine_score")
         val produceFrequency = input.feature("produce_frequency")
-        val householdMaintenanceValue = input.feature("hygiene_value_pct") + input.feature("cleaning_value_pct")
+        val householdRoutineScore = input.feature("household_routine_score")
+        val softDrinkFrequency = input.feature("soft_drink_frequency")
+        val alcoholicBeverageFrequency = input.feature("alcoholic_beverage_frequency")
+        val categoryDominanceGap = input.feature("category_dominance_gap")
+        val categoryStabilityScore = input.feature("category_stability_score")
+        val otherValuePct = input.feature("other_value_pct")
+        val hygieneCleaningCoOccurrence = input.feature("hygiene_cleaning_cooccurrence_frequency")
+        val essentialScore = input.feature("essential_score")
+        val basicProduceCoOccurrence = input.feature("basic_produce_cooccurrence_frequency")
+        val alcoholSnackCoOccurrence = input.feature("alcohol_snack_cooccurrence_frequency")
 
         return when {
-            totalReceipts <= 0.0 -> ConsumptionBehaviorProfile.UNDEFINED
             classifiedItemsPercentage < 0.50 -> ConsumptionBehaviorProfile.UNDEFINED
-            categoryConcentrationIndex >= 0.70 -> ConsumptionBehaviorProfile.HIGHLY_CONCENTRATED
-            nonEssentialPercentage >= 0.75 && convenienceScore >= 0.55 -> ConsumptionBehaviorProfile.IMPULSIVE_CONSUMPTION
-            convenienceScore >= 0.60 -> ConsumptionBehaviorProfile.CONVENIENCE_ORIENTED
-            beveragesValuePercentage >= 0.25 && beveragesFrequency >= 0.50 -> ConsumptionBehaviorProfile.BEVERAGE_RECURRENT
-            essentialScore >= 0.60 -> ConsumptionBehaviorProfile.ESSENTIAL_FOCUSED
-            householdMaintenanceValue >= 0.25 -> ConsumptionBehaviorProfile.HOUSEHOLD_MAINTENANCE
-            produceValuePercentage <= 0.05 && produceFrequency <= 0.20 -> ConsumptionBehaviorProfile.LOW_FRESH_FOOD
-            diversityScore >= 0.55 && categoryConcentrationIndex < 0.45 -> ConsumptionBehaviorProfile.DIVERSIFIED_BALANCED
+            categoryConcentrationIndex >= 0.70 && categoryDominanceGap >= 0.30 -> ConsumptionBehaviorProfile.HIGHLY_CONCENTRATED
+            alcoholicBeverageFrequency >= 0.30 || alcoholSnackCoOccurrence >= 0.25 -> {
+                ConsumptionBehaviorProfile.ALCOHOLIC_BEVERAGE_RECURRENT
+            }
+            nonAlcoholicBeverageSnackCoOccurrence >= 0.35 || softDrinkFrequency >= 0.30 -> {
+                ConsumptionBehaviorProfile.NON_ALCOHOLIC_BEVERAGE_RECURRENT
+            }
+            essentialRoutineScore >= 0.55 && essentialScore >= 0.55 -> ConsumptionBehaviorProfile.ESSENTIAL_FOCUSED
+            householdRoutineScore >= 0.40 || hygieneCleaningCoOccurrence >= 0.35 -> ConsumptionBehaviorProfile.HOUSEHOLD_MAINTENANCE
+            produceFrequency <= 0.15 && basicProduceCoOccurrence <= 0.20 -> ConsumptionBehaviorProfile.LOW_FRESH_FOOD
+            otherValuePct >= 0.30 && categoryStabilityScore <= 0.35 -> ConsumptionBehaviorProfile.IMPULSIVE_CONSUMPTION
+            categoryStabilityScore >= 0.55 && categoryConcentrationIndex < 0.45 -> ConsumptionBehaviorProfile.DIVERSIFIED_BALANCED
+            otherValuePct >= 0.20 -> ConsumptionBehaviorProfile.CONVENIENCE_ORIENTED
             else -> ConsumptionBehaviorProfile.DIVERSIFIED_BALANCED
         }
     }

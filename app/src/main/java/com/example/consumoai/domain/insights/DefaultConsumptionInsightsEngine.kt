@@ -62,8 +62,8 @@ class DefaultConsumptionInsightsEngine : ConsumptionInsightsEngine {
                     description = "Bebidas estiveram presentes em grande parte das compras analisadas.",
                     type = InsightType.RECURRENCE,
                     severity = InsightSeverity.HIGH,
-                    relatedProfiles = listOf(ConsumptionBehaviorProfile.BEVERAGE_RECURRENT),
-                    relatedFeatures = listOf("beverages_frequency")
+                    relatedProfiles = listOf(ConsumptionBehaviorProfile.NON_ALCOHOLIC_BEVERAGE_RECURRENT),
+                    relatedFeatures = listOf("non_alcoholic_beverage_frequency")
                 )
             )
         }
@@ -182,7 +182,7 @@ class DefaultConsumptionInsightsEngine : ConsumptionInsightsEngine {
             beveragesStrong &&
             diversityStrong &&
             essentialsStrong &&
-            topProfiles.contains(ConsumptionBehaviorProfile.BEVERAGE_RECURRENT) &&
+            topProfiles.contains(ConsumptionBehaviorProfile.NON_ALCOHOLIC_BEVERAGE_RECURRENT) &&
             topProfiles.contains(ConsumptionBehaviorProfile.DIVERSIFIED_BALANCED)
         ) {
             insights.add(
@@ -192,7 +192,7 @@ class DefaultConsumptionInsightsEngine : ConsumptionInsightsEngine {
                     type = InsightType.BEHAVIORAL_PATTERN,
                     severity = InsightSeverity.MEDIUM,
                     relatedProfiles = listOf(
-                        ConsumptionBehaviorProfile.BEVERAGE_RECURRENT,
+                        ConsumptionBehaviorProfile.NON_ALCOHOLIC_BEVERAGE_RECURRENT,
                         ConsumptionBehaviorProfile.DIVERSIFIED_BALANCED,
                         ConsumptionBehaviorProfile.ESSENTIAL_FOCUSED
                     ),
@@ -307,7 +307,8 @@ class DefaultConsumptionInsightsEngine : ConsumptionInsightsEngine {
             ConsumptionBehaviorProfile.CONVENIENCE_ORIENTED -> "orientado ao consumo de conveniência"
             ConsumptionBehaviorProfile.ESSENTIAL_FOCUSED -> "focado em itens essenciais"
             ConsumptionBehaviorProfile.DIVERSIFIED_BALANCED -> "diversificado e equilibrado"
-            ConsumptionBehaviorProfile.BEVERAGE_RECURRENT -> "recorrente em bebidas"
+            ConsumptionBehaviorProfile.NON_ALCOHOLIC_BEVERAGE_RECURRENT -> "recorrente em bebidas não alcoólicas"
+            ConsumptionBehaviorProfile.ALCOHOLIC_BEVERAGE_RECURRENT -> "recorrente em bebidas alcoólicas"
             ConsumptionBehaviorProfile.LOW_FRESH_FOOD -> "com baixa presença de alimentos frescos"
             ConsumptionBehaviorProfile.HOUSEHOLD_MAINTENANCE -> "focado em higiene e limpeza"
             ConsumptionBehaviorProfile.HIGHLY_CONCENTRATED -> "muito concentrado em categoria"

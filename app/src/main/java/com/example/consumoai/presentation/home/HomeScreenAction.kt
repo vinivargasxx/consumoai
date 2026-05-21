@@ -5,3 +5,5 @@ sealed interface HomeScreenAction {
     data object OnAnalyzeStoredReceiptsClick : HomeScreenAction
     data object OnClearReceiptsClick : HomeScreenAction
 }
+
+

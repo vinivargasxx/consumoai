@@ -1,11 +1,28 @@
 package com.example.consumoai.domain.usecase
 
+import com.example.consumoai.domain.classifier.ProductSemanticTagger
 import com.example.consumoai.domain.model.CategoryMetrics
 import com.example.consumoai.domain.model.ConsumptionMetrics
 import com.example.consumoai.domain.model.ProductCategory
+import com.example.consumoai.domain.model.ProductSemanticTag
+import com.example.consumoai.domain.model.ProductItem
 import com.example.consumoai.domain.model.Receipt
+import java.text.Normalizer
+import java.time.temporal.ChronoUnit
+import java.util.Locale
+import kotlin.math.abs
+import kotlin.math.pow
+import kotlin.math.sqrt
 
-class CalculateConsumptionMetricsUseCase {
+class CalculateConsumptionMetricsUseCase(
+    private val semanticTagger: ProductSemanticTagger = object : ProductSemanticTagger {
+        override fun tagsFor(item: ProductItem): Set<ProductSemanticTag> = emptySet()
+    }
+) {
+
+    private companion object {
+        const val ALCOHOL_AUDIT_TAG = "ALCOHOL_AUDIT"
+    }
 
     operator fun invoke(receipts: List<Receipt>): ConsumptionMetrics {
         if (receipts.isEmpty()) {
@@ -57,7 +74,46 @@ class CalculateConsumptionMetricsUseCase {
                 averageProduceItemsPerReceipt = 0.0,
                 convenienceScore = 0.0,
                 essentialScore = 0.0,
-                diversityScore = 0.0
+                diversityScore = 0.0,
+                timeSpanDays = 0.0,
+                receiptsPerWeek = 0.0,
+                averageDaysBetweenReceipts = 0.0,
+                purchaseRegularityScore = 0.0,
+                ticketStandardDeviation = 0.0,
+                ticketVariationCoefficient = 0.0,
+                itemCountVariationCoefficient = 0.0,
+                highTicketReceiptsPercentage = 0.0,
+                lowTicketReceiptsPercentage = 0.0,
+                categoryStabilityScore = 0.0,
+                averageCategoryOverlapBetweenReceipts = 0.0,
+                recurringItemRatio = 0.0,
+                topItemRepetitionRate = 0.0,
+                softDrinkFrequency = 0.0,
+                softDrinkValuePct = 0.0,
+                nonAlcoholicBeverageFrequency = 0.0,
+                nonAlcoholicBeverageValuePct = 0.0,
+                alcoholicBeverageFrequency = 0.0,
+                alcoholicBeverageValuePct = 0.0,
+                beverageSnackCoOccurrenceFrequency = 0.0,
+                nonAlcoholicBeverageSnackCoOccurrenceFrequency = 0.0,
+                alcoholSnackCoOccurrenceFrequency = 0.0,
+                energyDrinkFrequency = 0.0,
+                energyDrinkValuePct = 0.0,
+                snackSweetFrequency = 0.0,
+                snackSweetValuePct = 0.0,
+                frozenConvenienceValuePct = 0.0,
+                frozenConvenienceFrequency = 0.0,
+                dairyValuePct = 0.0,
+                meatProteinValuePct = 0.0,
+                freshProduceValuePct = 0.0,
+                convenienceMealValuePct = 0.0,
+                convenienceMealFrequency = 0.0,
+                hygieneCleaningCoOccurrenceFrequency = 0.0,
+                basicProduceCoOccurrenceFrequency = 0.0,
+                essentialRoutineScore = 0.0,
+                convenienceRoutineScore = 0.0,
+                householdRoutineScore = 0.0,
+                freshFoodPresenceScore = 0.0
             )
         }
 
@@ -186,7 +242,141 @@ class CalculateConsumptionMetricsUseCase {
         val essentialScore = ((essentialCategoriesPercentage + receiptsWithBasicFoodPercentage + receiptsWithProducePercentage) / 3.0).coerceIn(0.0, 1.0)
         val diversityScore = ((categoryDiversityIndex + safeDivide(averageCategoriesPerReceipt, ProductCategory.entries.size.toDouble())) / 2.0).coerceIn(0.0, 1.0)
 
-        val metrics = ConsumptionMetrics(
+        // === TEMPORAL/TEMPORAL PATTERN ===
+        val sortedByDate = receipts.sortedBy { it.date }
+        val timeSpanDays = if (sortedByDate.size <= 1) 1.0 else {
+            ChronoUnit.DAYS.between(sortedByDate.first().date, sortedByDate.last().date).toDouble().coerceAtLeast(1.0)
+        }
+        val receiptsPerWeek = receipts.size / (timeSpanDays / 7.0)
+        val gaps = sortedByDate.zipWithNext { a, b -> ChronoUnit.DAYS.between(a.date, b.date).toDouble().coerceAtLeast(0.0) }
+        val averageDaysBetweenReceipts = gaps.averageOrZero()
+        val gapStdDev = standardDeviation(gaps)
+        val purchaseRegularityScore = (1.0 - safeDivide(gapStdDev, averageDaysBetweenReceipts.coerceAtLeast(1.0))).coerceIn(0.0, 1.0)
+
+        val tickets = receipts.map { it.totalValue }
+        val ticketStandardDeviation = standardDeviation(tickets)
+        val ticketVariationCoefficient = safeDivide(ticketStandardDeviation, tickets.averageOrZero().coerceAtLeast(1.0))
+
+        val itemCounts = receipts.map { it.items.size.toDouble() }
+        val itemCountVariationCoefficient = safeDivide(standardDeviation(itemCounts), itemCounts.averageOrZero().coerceAtLeast(1.0))
+
+        val highTicketReceiptsPercentageTemporal = receipts.count { it.totalValue > averageTicket }.toDouble() / receipts.size
+        val lowTicketReceiptsPercentageTemporal = receipts.count { it.totalValue < averageTicket }.toDouble() / receipts.size
+
+        val categorySets = receipts.map { receipt -> receipt.items.map { it.category }.toSet() }
+        val overlaps = categorySets.zipWithNext { a, b -> jaccard(a, b) }
+        val averageCategoryOverlapBetweenReceipts = overlaps.averageOrZero()
+        val categoryStabilityScore = averageCategoryOverlapBetweenReceipts
+
+        val normalizedNames = receipts.flatMap { receipt -> receipt.items.map { normalizeProductNameForRecurrence(it.name) } }
+            .filter { it.isNotBlank() }
+        val countsByName = normalizedNames.groupingBy { it }.eachCount()
+        val recurringDistinctNames = countsByName.count { it.value > 1 }
+        val recurringItemRatio = safeDivide(recurringDistinctNames.toDouble(), countsByName.size.toDouble())
+        val topItemRepetitionRate = safeDivide((countsByName.maxOfOrNull { it.value } ?: 0).toDouble(), receipts.size.toDouble())
+
+        val alcoholicReceiptItems = receipts.mapNotNull { receipt ->
+            val alcoholicItems = receipt.items.mapNotNull { item ->
+                val tags = semanticTagger.tagsFor(item)
+                if (tags.contains(ProductSemanticTag.ALCOHOLIC_BEVERAGE)) {
+                    item to tags
+                } else {
+                    null
+                }
+            }
+            if (alcoholicItems.isEmpty()) null else receipt to alcoholicItems
+        }
+        safeAuditLog("receipts_with_alcohol=${alcoholicReceiptItems.size}/${receipts.size}")
+        alcoholicReceiptItems.forEach { (receipt, alcoholicItems) ->
+            safeAuditLog("receipt_id=${receipt.id} alcoholic_items=${alcoholicItems.size}")
+            alcoholicItems.forEach { (item, tags) ->
+                val formattedValue = String.format(Locale.US, "%.2f", item.price)
+                val tagNames = tags.map { it.name }.sorted().joinToString(",")
+                safeAuditLog(
+                    "receipt_id=${receipt.id} product=\"${item.name}\" value=$formattedValue tags=[$tagNames]"
+                )
+            }
+        }
+
+        val receiptTagSets = receipts.map { receipt -> receipt.items.flatMap { semanticTagger.tagsFor(it) }.toSet() }
+
+        val beverageSnackCoOccurrenceFrequency = safeDivide(
+            receiptTagSets.count { tags ->
+                (tags.contains(ProductSemanticTag.ALCOHOLIC_BEVERAGE) || tags.contains(ProductSemanticTag.NON_ALCOHOLIC_BEVERAGE)) &&
+                    tags.contains(ProductSemanticTag.SNACK_OR_SWEET)
+            }.toDouble(),
+            receiptTagSets.size.toDouble()
+        )
+        val alcoholSnackCoOccurrenceFrequency = coOccurrence(receiptTagSets, ProductSemanticTag.ALCOHOLIC_BEVERAGE, ProductSemanticTag.SNACK_OR_SWEET)
+        val hygieneCleaningCoOccurrenceFrequency = coOccurrence(receiptTagSets, ProductSemanticTag.PERSONAL_CARE, ProductSemanticTag.HOUSEHOLD_CLEANING)
+        val basicProduceCoOccurrenceFrequency = receipts.count { receipt ->
+            val categories = receipt.items.map { it.category }.toSet()
+            categories.contains(ProductCategory.BASIC_FOOD) && categories.contains(ProductCategory.PRODUCE)
+        }.toDouble() / receipts.size
+
+        val totalValueForTags = receipts.sumOf { it.totalValue }.coerceAtLeast(0.00001)
+
+        fun valuePctByTag(tag: ProductSemanticTag): Double {
+            val value = receipts.flatMap { it.items }
+                .filter { semanticTagger.tagsFor(it).contains(tag) }
+                .sumOf { it.price }
+            return safeDivide(value, totalValueForTags)
+        }
+
+        fun freqByTag(tag: ProductSemanticTag): Double {
+            val withTag = receipts.count { receipt -> receipt.items.any { semanticTagger.tagsFor(it).contains(tag) } }
+            return safeDivide(withTag.toDouble(), receipts.size.toDouble())
+        }
+
+        val alcoholicBeverageValuePct = valuePctByTag(ProductSemanticTag.ALCOHOLIC_BEVERAGE)
+        val alcoholicBeverageFrequency = freqByTag(ProductSemanticTag.ALCOHOLIC_BEVERAGE)
+        val softDrinkValuePct = valuePctByTag(ProductSemanticTag.SOFT_DRINK)
+        val softDrinkFrequency = freqByTag(ProductSemanticTag.SOFT_DRINK)
+        val energyDrinkValuePct = valuePctByTag(ProductSemanticTag.ENERGY_DRINK)
+        val energyDrinkFrequency = freqByTag(ProductSemanticTag.ENERGY_DRINK)
+        val nonAlcoholicBeverageFrequency = freqByTag(ProductSemanticTag.NON_ALCOHOLIC_BEVERAGE)
+        val nonAlcoholicBeverageValuePct = valuePctByTag(ProductSemanticTag.NON_ALCOHOLIC_BEVERAGE)
+        val nonAlcoholicBeverageSnackCoOccurrenceFrequency = coOccurrence(receiptTagSets, ProductSemanticTag.NON_ALCOHOLIC_BEVERAGE, ProductSemanticTag.SNACK_OR_SWEET)
+        val snackSweetValuePct = valuePctByTag(ProductSemanticTag.SNACK_OR_SWEET)
+        val snackSweetFrequency = freqByTag(ProductSemanticTag.SNACK_OR_SWEET)
+        val frozenConvenienceValuePct = valuePctByTag(ProductSemanticTag.FROZEN_OR_READY_MEAL)
+        val frozenConvenienceFrequency = freqByTag(ProductSemanticTag.FROZEN_OR_READY_MEAL)
+        val dairyValuePct = valuePctByTag(ProductSemanticTag.DAIRY)
+        val meatProteinValuePct = valuePctByTag(ProductSemanticTag.MEAT_OR_PROTEIN)
+        val freshProduceValuePct = valuePctByTag(ProductSemanticTag.FRESH_PRODUCE)
+
+        val convenienceMealValuePct = ((frozenConvenienceValuePct + snackSweetValuePct) / 2.0).coerceIn(0.0, 1.0)
+        val convenienceMealFrequency = ((frozenConvenienceFrequency + snackSweetFrequency) / 2.0).coerceIn(0.0, 1.0)
+
+        val essentialRoutineScore = averageOf(
+            frequencyByCategory.valueOf(ProductCategory.BASIC_FOOD),
+            frequencyByCategory.valueOf(ProductCategory.PRODUCE),
+            essentialCategoriesPercentage,
+            basicProduceCoOccurrenceFrequency
+        )
+
+        val convenienceRoutineScore = averageOf(
+            frequencyByCategory.valueOf(ProductCategory.INDUSTRIALIZED),
+            snackSweetFrequency,
+            frozenConvenienceFrequency,
+            convenienceMealValuePct
+        )
+
+
+        val householdRoutineScore = averageOf(
+            frequencyByCategory.valueOf(ProductCategory.HYGIENE),
+            frequencyByCategory.valueOf(ProductCategory.CLEANING),
+            hygieneCleaningCoOccurrenceFrequency
+        )
+
+        val freshFoodPresenceScore = averageOf(
+            valuePercentageByCategory.valueOf(ProductCategory.PRODUCE),
+            frequencyByCategory.valueOf(ProductCategory.PRODUCE),
+            freshProduceValuePct,
+            basicProduceCoOccurrenceFrequency
+        )
+
+        return ConsumptionMetrics(
             valuePercentageByCategory = valuePercentageByCategory,
             itemPercentageByCategory = itemPercentageByCategory,
             frequencyByCategory = frequencyByCategory,
@@ -234,10 +424,47 @@ class CalculateConsumptionMetricsUseCase {
             averageProduceItemsPerReceipt = averageProduceItemsPerReceipt,
             convenienceScore = convenienceScore,
             essentialScore = essentialScore,
-            diversityScore = diversityScore
+            diversityScore = diversityScore,
+            timeSpanDays = timeSpanDays,
+            receiptsPerWeek = receiptsPerWeek,
+            averageDaysBetweenReceipts = averageDaysBetweenReceipts,
+            purchaseRegularityScore = purchaseRegularityScore,
+            ticketStandardDeviation = ticketStandardDeviation,
+            ticketVariationCoefficient = ticketVariationCoefficient,
+            itemCountVariationCoefficient = itemCountVariationCoefficient,
+            highTicketReceiptsPercentage = highTicketReceiptsPercentageTemporal,
+            lowTicketReceiptsPercentage = lowTicketReceiptsPercentageTemporal,
+            categoryStabilityScore = categoryStabilityScore,
+            averageCategoryOverlapBetweenReceipts = averageCategoryOverlapBetweenReceipts,
+            recurringItemRatio = recurringItemRatio,
+            topItemRepetitionRate = topItemRepetitionRate,
+            softDrinkFrequency = softDrinkFrequency,
+            softDrinkValuePct = softDrinkValuePct,
+            nonAlcoholicBeverageFrequency = nonAlcoholicBeverageFrequency,
+            nonAlcoholicBeverageValuePct = nonAlcoholicBeverageValuePct,
+            alcoholicBeverageFrequency = alcoholicBeverageFrequency,
+            alcoholicBeverageValuePct = alcoholicBeverageValuePct,
+            beverageSnackCoOccurrenceFrequency = beverageSnackCoOccurrenceFrequency,
+            nonAlcoholicBeverageSnackCoOccurrenceFrequency = nonAlcoholicBeverageSnackCoOccurrenceFrequency,
+            alcoholSnackCoOccurrenceFrequency = alcoholSnackCoOccurrenceFrequency,
+            energyDrinkFrequency = energyDrinkFrequency,
+            energyDrinkValuePct = energyDrinkValuePct,
+            snackSweetFrequency = snackSweetFrequency,
+            snackSweetValuePct = snackSweetValuePct,
+            frozenConvenienceValuePct = frozenConvenienceValuePct,
+            frozenConvenienceFrequency = frozenConvenienceFrequency,
+            dairyValuePct = dairyValuePct,
+            meatProteinValuePct = meatProteinValuePct,
+            freshProduceValuePct = freshProduceValuePct,
+            convenienceMealValuePct = convenienceMealValuePct,
+            convenienceMealFrequency = convenienceMealFrequency,
+            hygieneCleaningCoOccurrenceFrequency = hygieneCleaningCoOccurrenceFrequency,
+            basicProduceCoOccurrenceFrequency = basicProduceCoOccurrenceFrequency,
+            essentialRoutineScore = essentialRoutineScore,
+            convenienceRoutineScore = convenienceRoutineScore,
+            householdRoutineScore = householdRoutineScore,
+            freshFoodPresenceScore = freshFoodPresenceScore
         )
-
-        return metrics
     }
 
     private fun emptyCategoryMap(): Map<ProductCategory, Double> {
@@ -287,6 +514,48 @@ class CalculateConsumptionMetricsUseCase {
         return ProductCategory.entries
             .sortedWith(compareByDescending<ProductCategory> { values.countOf(it) }.thenBy { it.ordinal })
             .filter { values.countOf(it) > 0 }
+    }
+
+    private fun normalizeProductNameForRecurrence(name: String): String {
+        val upper = name.uppercase(Locale.ROOT)
+        val noAccents = Normalizer.normalize(upper, Normalizer.Form.NFD).replace(Regex("\\p{M}+"), "")
+        val noMeasures = noAccents
+            .replace(Regex("\\b\\d+[.,]?\\d*\\s?(ML|L|G|KG|UN|UNS)\\b"), " ")
+            .replace(Regex("[^A-Z0-9 ]"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+        return noMeasures
+    }
+
+    private fun coOccurrence(receiptTagSets: List<Set<ProductSemanticTag>>, first: ProductSemanticTag, second: ProductSemanticTag): Double {
+        if (receiptTagSets.isEmpty()) return 0.0
+        val withBoth = receiptTagSets.count { it.contains(first) && it.contains(second) }
+        return safeDivide(withBoth.toDouble(), receiptTagSets.size.toDouble())
+    }
+
+    private fun jaccard(a: Set<ProductCategory>, b: Set<ProductCategory>): Double {
+        val union = (a + b).size.toDouble()
+        if (union == 0.0) return 0.0
+        val intersection = a.intersect(b).size.toDouble()
+        return safeDivide(intersection, union)
+    }
+
+    private fun standardDeviation(values: List<Double>): Double {
+        if (values.isEmpty()) return 0.0
+        val mean = values.average()
+        val variance = values.sumOf { (it - mean).pow(2) } / values.size
+        return sqrt(abs(variance))
+    }
+
+    private fun List<Double>.averageOrZero(): Double = if (isEmpty()) 0.0 else average()
+
+    private fun averageOf(vararg values: Double): Double {
+        if (values.isEmpty()) return 0.0
+        return values.map { if (it.isFinite()) it else 0.0 }.average().coerceIn(0.0, 1.0)
+    }
+
+    private fun safeAuditLog(message: String) {
+        runCatching { println("$ALCOHOL_AUDIT_TAG $message") }
     }
 }
 

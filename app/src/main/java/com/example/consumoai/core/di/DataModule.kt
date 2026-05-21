@@ -4,6 +4,7 @@ import androidx.room.Room
 import com.example.consumoai.BuildConfig
 import com.example.consumoai.data.classifier.ConsumptionModelApi
 import com.example.consumoai.data.classifier.KeywordProductClassifierDataSource
+import com.example.consumoai.data.classifier.KeywordProductSemanticTagger
 import com.example.consumoai.data.classifier.RemoteConsumptionBehaviorClassifier
 import com.example.consumoai.data.classifier.RuleBasedConsumptionBehaviorClassifier
 import com.example.consumoai.data.datasource.qrcode.NfceQrCodeDataSource
@@ -12,6 +13,7 @@ import com.example.consumoai.data.parser.NfceHtmlParserDataSource
 import com.example.consumoai.data.repository.ReceiptRepositoryImpl
 import com.example.consumoai.domain.classifier.ConsumptionBehaviorClassifier
 import com.example.consumoai.domain.classifier.ProductClassifier
+import com.example.consumoai.domain.classifier.ProductSemanticTagger
 import com.example.consumoai.domain.repository.ReceiptRepository
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
@@ -54,6 +56,10 @@ val dataModule = module {
 
     single<ProductClassifier> {
         KeywordProductClassifierDataSource()
+    }
+
+    single<ProductSemanticTagger> {
+        KeywordProductSemanticTagger()
     }
 
     single {

@@ -57,8 +57,83 @@ data class ConsumptionMetrics(
     val averageBasicFoodItemsPerReceipt: Double,
     val averageProduceItemsPerReceipt: Double,
 
-    // Features oficiais aproveitadas pela IA V1
+    // Scores-base reaproveitados nas métricas e narrativa do fluxo final.
     val convenienceScore: Double,
     val essentialScore: Double,
     val diversityScore: Double
+
+    // === TEMPORAL/TEMPORAL PATTERN ===
+    // Métricas de distribuição temporal e recorrência
+    , val timeSpanDays: Double,
+    val receiptsPerWeek: Double,
+    val averageDaysBetweenReceipts: Double,
+    val purchaseRegularityScore: Double,
+    val ticketStandardDeviation: Double,
+    val ticketVariationCoefficient: Double,
+    val itemCountVariationCoefficient: Double,
+    val highTicketReceiptsPercentage: Double,
+    val lowTicketReceiptsPercentage: Double,
+    val categoryStabilityScore: Double,
+    val averageCategoryOverlapBetweenReceipts: Double,
+    val recurringItemRatio: Double,
+    val topItemRepetitionRate: Double,
+
+    // === BEVERAGE-SPECIFIC METRICS ===
+    // Frequência de bebidas: notas que possuem QUALQUER tipo de bebida (genérica BEVERAGES)
+    // Nota: beverages_frequency já está em frequencyByCategory[ProductCategory.BEVERAGES]
+    //
+    // Frequência de refr igerantes: notas que possuem bebidas não alcoólicas industrializadas
+    /** Frequência de notas com bebidas não alcoólicas industrializadas (refrigerante, suco industrializado, etc) */
+    val softDrinkFrequency: Double,
+    /** Valor percentual de refrigerantes em relação ao total */
+    val softDrinkValuePct: Double,
+    /** Frequência de notas com bebidas não alcoólicas (água, suco, refrigerante, energético e similares) */
+    val nonAlcoholicBeverageFrequency: Double,
+    /** Valor percentual de bebidas não alcoólicas em relação ao total */
+    val nonAlcoholicBeverageValuePct: Double,
+    //
+    // Frequência de bebidas alcoólicas: notas que possuem alguma bebida alcoólica
+    /** Frequência de notas com bebidas alcoólicas (cerve ja, vinho, chopp, vodka, etc) */
+    val alcoholicBeverageFrequency: Double,
+    /** Valor percentual de bebidas alcoólicas em relação ao total */
+    val alcoholicBeverageValuePct: Double,
+    //
+    // Co-ocorrências (consumo combinado)
+    /** Frequência de notas que possuem bebidas de QUALQUER tipo junto com snacks */
+    val beverageSnackCoOccurrenceFrequency: Double,
+    /** Frequência de notas que possuem bebidas não alcoólicas junto com snacks */
+    val nonAlcoholicBeverageSnackCoOccurrenceFrequency: Double,
+    /** Frequência de notas que possuem bebidas alcoólicas junto com snacks */
+    val alcoholSnackCoOccurrenceFrequency: Double,
+    //
+    // Bebidas adicionais/especializadas (raramente usadas no modelo, mas mantidas para análise)
+    val energyDrinkFrequency: Double,
+    val energyDrinkValuePct: Double,
+    val snackSweetFrequency: Double,
+    val snackSweetValuePct: Double,
+
+    // === CO-OCCURRENCE & LIFESTYLE PATTERNS ===
+    val hygieneCleaningCoOccurrenceFrequency: Double,
+    val basicProduceCoOccurrenceFrequency: Double,
+
+    // === SPECIALIZED CATEGORY METRICS ===
+    /** Valor percentual de frozen convenience meals */
+    val frozenConvenienceValuePct: Double,
+    val frozenConvenienceFrequency: Double,
+    val dairyValuePct: Double,
+    val meatProteinValuePct: Double,
+    val freshProduceValuePct: Double,
+    val convenienceMealValuePct: Double,
+    val convenienceMealFrequency: Double,
+
+    // === ROUTINE/BEHAVIORAL SCORES ===
+    // Scores que agregam padrões comportamentais específicos
+    /** Frequência/consistência de itens essenciais nas compras */
+    val essentialRoutineScore: Double,
+    /** Frequência/consistência de itens de conveniência nas compras */
+    val convenienceRoutineScore: Double,
+    /** Frequência/consistência de compras com itens de limpeza/higiene */
+    val householdRoutineScore: Double,
+    /** Score de presença de alimentos frescos nas compras */
+    val freshFoodPresenceScore: Double
 )

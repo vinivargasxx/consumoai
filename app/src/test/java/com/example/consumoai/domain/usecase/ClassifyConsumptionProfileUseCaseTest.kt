@@ -4,6 +4,7 @@ import com.example.consumoai.data.classifier.RuleBasedConsumptionBehaviorClassif
 import com.example.consumoai.domain.model.BehaviorClassificationSource
 import com.example.consumoai.domain.model.ConsumptionBehaviorProfile
 import com.example.consumoai.domain.model.ConsumptionModelInput
+import com.example.consumoai.domain.model.MODEL_FINAL_FEATURES
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -29,23 +30,35 @@ class ClassifyConsumptionProfileUseCaseTest {
     }
 
     @Test
-    fun invoke_returnsBeverageRecurrentWhenValueAndFrequencyThresholdsMatch() = runBlocking {
+    fun invoke_returnsBeverageRecurrentWhenV3BeverageSignalsAreHigh() = runBlocking {
         val input = input(
             "classified_items_percentage" to 0.9,
             "category_concentration_index" to 0.3,
-            "beverages_value_pct" to 0.3,
-            "beverages_frequency" to 0.75
+            "beverage_snack_cooccurrence_frequency" to 0.42,
+            "soft_drink_frequency" to 0.58
         )
 
-        assertEquals(ConsumptionBehaviorProfile.BEVERAGE_RECURRENT, useCase(input).mainProfile)
+        assertEquals(ConsumptionBehaviorProfile.NON_ALCOHOLIC_BEVERAGE_RECURRENT, useCase(input).mainProfile)
     }
 
     @Test
-    fun invoke_returnsConvenienceOrientedWhenConvenienceScoreIsHigh() = runBlocking {
+    fun invoke_returnsAlcoholicBeverageRecurrentWhenAlcoholSignalsAreHigh() = runBlocking {
+        val input = input(
+            "classified_items_percentage" to 0.9,
+            "alcoholic_beverage_frequency" to 0.34,
+            "alcohol_snack_cooccurrence_frequency" to 0.28
+        )
+
+        assertEquals(ConsumptionBehaviorProfile.ALCOHOLIC_BEVERAGE_RECURRENT, useCase(input).mainProfile)
+    }
+
+    @Test
+    fun invoke_returnsConvenienceOrientedWhenOtherValueIsElevated() = runBlocking {
         val input = input(
             "classified_items_percentage" to 0.9,
             "category_concentration_index" to 0.4,
-            "convenience_score" to 0.6
+            "category_stability_score" to 0.30,
+            "other_value_pct" to 0.25
         )
 
         assertEquals(ConsumptionBehaviorProfile.CONVENIENCE_ORIENTED, useCase(input).mainProfile)
@@ -55,42 +68,34 @@ class ClassifyConsumptionProfileUseCaseTest {
     fun invoke_returnsHighlyConcentratedWhenConcentrationIsVeryHigh() = runBlocking {
         val input = input(
             "classified_items_percentage" to 0.9,
-            "category_concentration_index" to 0.72
+            "category_concentration_index" to 0.72,
+            "category_dominance_gap" to 0.35
         )
 
         assertEquals(ConsumptionBehaviorProfile.HIGHLY_CONCENTRATED, useCase(input).mainProfile)
     }
 
     private fun input(vararg overrides: Pair<String, Double>): ConsumptionModelInput {
-        val defaults = mutableMapOf(
-            "total_receipts" to 5.0,
-            "total_items" to 20.0,
-            "total_value" to 200.0,
-            "average_ticket" to 40.0,
-            "average_items_per_receipt" to 4.0,
-            "basic_food_value_pct" to 0.20,
-            "industrialized_value_pct" to 0.20,
-            "beverages_value_pct" to 0.10,
-            "hygiene_value_pct" to 0.05,
-            "cleaning_value_pct" to 0.05,
-            "produce_value_pct" to 0.10,
-            "other_value_pct" to 0.30,
-            "basic_food_frequency" to 0.60,
-            "industrialized_frequency" to 0.60,
-            "beverages_frequency" to 0.30,
-            "produce_frequency" to 0.30,
-            "hygiene_frequency" to 0.20,
-            "cleaning_frequency" to 0.20,
-            "category_concentration_index" to 0.30,
-            "category_dominance_gap" to 0.10,
-            "category_diversity_index" to 0.60,
-            "essential_categories_percentage" to 0.40,
-            "non_essential_categories_percentage" to 0.60,
-            "convenience_score" to 0.30,
-            "essential_score" to 0.40,
-            "diversity_score" to 0.50,
-            "classified_items_percentage" to 0.90
-        )
+        val defaults = MODEL_FINAL_FEATURES
+            .associateWith { 0.1 }
+            .toMutableMap()
+            .apply {
+                this["beverage_snack_cooccurrence_frequency"] = 0.20
+                this["category_concentration_index"] = 0.30
+                this["classified_items_percentage"] = 0.90
+                this["essential_routine_score"] = 0.40
+                this["produce_frequency"] = 0.30
+                this["household_routine_score"] = 0.15
+                this["soft_drink_frequency"] = 0.18
+                this["alcoholic_beverage_frequency"] = 0.10
+                this["category_dominance_gap"] = 0.10
+                this["category_stability_score"] = 0.60
+                this["other_value_pct"] = 0.12
+                this["hygiene_cleaning_cooccurrence_frequency"] = 0.10
+                this["essential_score"] = 0.40
+                this["basic_produce_cooccurrence_frequency"] = 0.25
+                this["alcohol_snack_cooccurrence_frequency"] = 0.10
+            }
 
         overrides.forEach { (key, value) ->
             defaults[key] = value
