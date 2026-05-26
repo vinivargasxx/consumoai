@@ -5,18 +5,17 @@ import com.example.consumoai.domain.model.ConsumptionBehaviorProfile
 import com.example.consumoai.domain.model.ConsumptionBehaviorResult
 import com.example.consumoai.domain.model.ConsumptionProfileSummary
 import com.example.consumoai.domain.model.ProfileInterpretationType
+import com.example.consumoai.domain.model.topProfiles
 
 class BuildConsumptionProfileSummaryUseCase {
 
     operator fun invoke(result: ConsumptionBehaviorResult): ConsumptionProfileSummary {
-        val composition = result.profileScores
-            .entries
-            .sortedByDescending { it.value }
-            .take(3)
-            .map { (profile, score) ->
+        val topProfiles = result.topProfiles(limit = 3)
+        val composition = topProfiles
+            .map { summary ->
                 BehaviorCompositionItem(
-                    profile = profile,
-                    percentage = (score * 100).coerceIn(0.0, 100.0)
+                    profile = summary.profile,
+                    percentage = (summary.score * 100).coerceIn(0.0, 100.0)
                 )
             }
 
@@ -66,10 +65,12 @@ class BuildConsumptionProfileSummaryUseCase {
         result: ConsumptionBehaviorResult,
         composition: List<BehaviorCompositionItem>
     ): ProfileInterpretationType {
+        val firstScore = composition.getOrNull(0)?.percentage?.div(100.0) ?: result.confidence
         val secondScore = composition.getOrNull(1)?.percentage?.div(100.0) ?: 0.0
+        val scoreGap = firstScore - secondScore
         return when {
-            result.confidence < 0.30 -> ProfileInterpretationType.LOW_CONFIDENCE_PROFILE
-            result.confidence < 0.45 && secondScore >= 0.18 -> ProfileInterpretationType.HYBRID_PROFILE
+            result.confidence < 0.50 -> ProfileInterpretationType.LOW_CONFIDENCE_PROFILE
+            secondScore >= 0.25 && scoreGap <= 0.35 -> ProfileInterpretationType.HYBRID_PROFILE
             else -> ProfileInterpretationType.PURE_PROFILE
         }
     }

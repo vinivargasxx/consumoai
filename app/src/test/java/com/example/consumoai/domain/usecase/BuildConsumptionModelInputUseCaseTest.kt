@@ -50,25 +50,32 @@ class BuildConsumptionModelInputUseCaseTest {
         assertEquals(15, result.features.size)
         assertEquals(MODEL_FINAL_FEATURES, result.features.keys.toList())
 
-        // Validar presença das 15 features oficiais atuais
-        assertTrue(result.features.containsKey("non_alcoholic_beverage_frequency"))
-        assertTrue(result.features.containsKey("category_concentration_index"))
-        assertTrue(result.features.containsKey("classified_items_percentage"))
-        assertTrue(result.features.containsKey("non_alcoholic_beverage_snack_cooccurrence_frequency"))
-        assertTrue(result.features.containsKey("household_routine_score"))
-        assertTrue(result.features.containsKey("alcoholic_beverage_frequency"))
-        assertTrue(result.features.containsKey("produce_frequency"))
-        assertTrue(result.features.containsKey("essential_routine_score"))
-        assertTrue(result.features.containsKey("category_dominance_gap"))
-        assertTrue(result.features.containsKey("category_stability_score"))
-        assertTrue(result.features.containsKey("essential_score"))
-        assertTrue(result.features.containsKey("other_value_pct"))
-        assertTrue(result.features.containsKey("hygiene_cleaning_cooccurrence_frequency"))
-        assertTrue(result.features.containsKey("basic_produce_cooccurrence_frequency"))
-        assertTrue(result.features.containsKey("alcohol_snack_cooccurrence_frequency"))
+        // Validar presença das 15 features oficiais calibradas (ordem exata)
+        val expectedFeatures = listOf(
+            "classified_items_percentage",
+            "category_concentration_index",
+            "essential_routine_score",
+            "household_routine_score",
+            "produce_frequency",
+            "basic_produce_cooccurrence_frequency",
+            "alcoholic_beverage_frequency",
+            "essential_score",
+            "category_dominance_gap",
+            "non_alcoholic_beverage_frequency",
+            "category_stability_score",
+            "other_value_pct",
+            "hygiene_cleaning_cooccurrence_frequency",
+            "soft_drink_frequency",
+            "ticket_variation_coefficient"
+        )
+        assertEquals(expectedFeatures, result.features.keys.toList())
+        expectedFeatures.forEach { feature ->
+            assertTrue("Feature ausente: $feature", result.features.containsKey(feature))
+        }
 
         // Validar que features removidas NÃO estão nas 15 oficiais
-        assertFalse(result.features.containsKey("soft_drink_frequency"))
+        assertFalse(result.features.containsKey("alcohol_snack_cooccurrence_frequency"))
+        assertFalse(result.features.containsKey("non_alcoholic_beverage_snack_cooccurrence_frequency"))
         assertFalse(result.features.containsKey("soft_drink_value_pct"))
         assertFalse(result.features.containsKey("alcoholic_beverage_value_pct"))
         assertFalse(result.features.containsKey("non_alcoholic_beverage_value_pct"))

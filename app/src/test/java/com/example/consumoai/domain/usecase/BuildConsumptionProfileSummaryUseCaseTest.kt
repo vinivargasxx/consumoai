@@ -13,14 +13,14 @@ class BuildConsumptionProfileSummaryUseCaseTest {
     private val useCase = BuildConsumptionProfileSummaryUseCase()
 
     @Test
-    fun invoke_marksPureProfileWhenConfidenceIsHigh() {
+    fun invoke_marksPureProfileWhenSecondScoreIsLow() {
         val summary = useCase(
             ConsumptionBehaviorResult(
                 mainProfile = ConsumptionBehaviorProfile.NON_ALCOHOLIC_BEVERAGE_RECURRENT,
-                confidence = 0.62,
+                confidence = 0.90,
                 profileScores = mapOf(
-                    ConsumptionBehaviorProfile.NON_ALCOHOLIC_BEVERAGE_RECURRENT to 0.62,
-                    ConsumptionBehaviorProfile.DIVERSIFIED_BALANCED to 0.20
+                    ConsumptionBehaviorProfile.NON_ALCOHOLIC_BEVERAGE_RECURRENT to 0.90,
+                    ConsumptionBehaviorProfile.DIVERSIFIED_BALANCED to 0.05
                 ),
                 source = BehaviorClassificationSource.TRAINED_MODEL
             )
@@ -31,15 +31,15 @@ class BuildConsumptionProfileSummaryUseCaseTest {
     }
 
     @Test
-    fun invoke_marksHybridProfileWhenConfidenceIsLowButSignalsAreMixed() {
+    fun invoke_marksHybridProfileWhenTopTwoScoresAreClose() {
         val summary = useCase(
             ConsumptionBehaviorResult(
                 mainProfile = ConsumptionBehaviorProfile.NON_ALCOHOLIC_BEVERAGE_RECURRENT,
-                confidence = 0.40,
+                confidence = 0.65,
                 profileScores = mapOf(
-                    ConsumptionBehaviorProfile.NON_ALCOHOLIC_BEVERAGE_RECURRENT to 0.40,
-                    ConsumptionBehaviorProfile.DIVERSIFIED_BALANCED to 0.28,
-                    ConsumptionBehaviorProfile.HOUSEHOLD_MAINTENANCE to 0.20
+                    ConsumptionBehaviorProfile.NON_ALCOHOLIC_BEVERAGE_RECURRENT to 0.65,
+                    ConsumptionBehaviorProfile.DIVERSIFIED_BALANCED to 0.35,
+                    ConsumptionBehaviorProfile.HOUSEHOLD_MAINTENANCE to 0.05
                 ),
                 source = BehaviorClassificationSource.TRAINED_MODEL
             )
@@ -51,14 +51,14 @@ class BuildConsumptionProfileSummaryUseCaseTest {
     }
 
     @Test
-    fun invoke_marksLowConfidenceProfileWhenConfidenceIsVeryLow() {
+    fun invoke_marksLowConfidenceProfileWhenConfidenceIsBelowThreshold() {
         val summary = useCase(
             ConsumptionBehaviorResult(
                 mainProfile = ConsumptionBehaviorProfile.UNDEFINED,
-                confidence = 0.20,
+                confidence = 0.49,
                 profileScores = mapOf(
-                    ConsumptionBehaviorProfile.UNDEFINED to 0.20,
-                    ConsumptionBehaviorProfile.DIVERSIFIED_BALANCED to 0.18
+                    ConsumptionBehaviorProfile.UNDEFINED to 0.49,
+                    ConsumptionBehaviorProfile.DIVERSIFIED_BALANCED to 0.40
                 ),
                 source = BehaviorClassificationSource.TRAINED_MODEL
             )

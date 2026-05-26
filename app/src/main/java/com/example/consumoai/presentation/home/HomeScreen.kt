@@ -107,6 +107,21 @@ fun HomeScreen(
                 // Card: Principais sinais
                 PrimarySignalsCard(presentation.primarySignals)
 
+                // Card: Sinais explicativos
+                PrimarySignalsCard(
+                    signals = presentation.explanationSignals,
+                    title = "Sinais secundários e contexto"
+                )
+
+                // Card: Perfil secundário (quando relevante)
+                SecondaryProfileCard(
+                    title = presentation.secondaryProfileTitle,
+                    description = presentation.secondaryProfileDescription
+                )
+
+                // Card: Explicação técnica simplificada
+                WhyThisResultCard(presentation.technicalExplanation)
+
                 // Card recolhível: Detalhes técnicos
                 TechnicalDetailsCard(presentation.technicalItems)
             }
@@ -369,7 +384,10 @@ private fun ConsumptionReadingCard(reading: String) {
 }
 
 @Composable
-private fun PrimarySignalsCard(signals: List<String>) {
+private fun PrimarySignalsCard(
+    signals: List<String>,
+    title: String = "Principais sinais"
+) {
     if (signals.isEmpty()) return
 
     Card(
@@ -381,7 +399,7 @@ private fun PrimarySignalsCard(signals: List<String>) {
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(
-                "Principais sinais",
+                title,
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onSecondaryContainer
             )
@@ -412,6 +430,70 @@ private fun PrimarySignalsCard(signals: List<String>) {
                         color = MaterialTheme.colorScheme.onSecondaryContainer
                     )
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SecondaryProfileCard(title: String?, description: String?) {
+    if (title.isNullOrBlank()) return
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.tertiaryContainer
+        )
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                "Perfil secundário relevante",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onTertiaryContainer
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                title,
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onTertiaryContainer
+            )
+            if (!description.isNullOrBlank()) {
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    description,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onTertiaryContainer
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun WhyThisResultCard(items: List<String>) {
+    if (items.isEmpty()) return
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        )
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                "Por que este resultado?",
+                style = MaterialTheme.typography.titleMedium
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            items.forEach { item ->
+                Text(
+                    text = "- $item",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.padding(bottom = 6.dp)
+                )
             }
         }
     }

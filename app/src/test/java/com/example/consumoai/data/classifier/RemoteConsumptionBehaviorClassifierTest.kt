@@ -108,22 +108,22 @@ class RemoteConsumptionBehaviorClassifierTest {
             .associateWith { 0.1 }
             .toMutableMap()
             .apply {
-                // Definir valores específicos para cada uma das 15 features oficiais do modelo final.
-                this["non_alcoholic_beverage_frequency"] = 0.45
-                this["category_concentration_index"] = 0.30
+                // Valores específicos para as 15 features oficiais do modelo calibrado.
                 this["classified_items_percentage"] = 0.90
-                this["non_alcoholic_beverage_snack_cooccurrence_frequency"] = 0.40
-                this["household_routine_score"] = 0.20
-                this["alcoholic_beverage_frequency"] = 0.15
-                this["produce_frequency"] = 0.35
+                this["category_concentration_index"] = 0.30
                 this["essential_routine_score"] = 0.55
-                this["category_dominance_gap"] = 0.25
-                this["category_stability_score"] = 0.60
+                this["household_routine_score"] = 0.20
+                this["produce_frequency"] = 0.35
+                this["basic_produce_cooccurrence_frequency"] = 0.22
+                this["alcoholic_beverage_frequency"] = 0.15
                 this["essential_score"] = 0.65
+                this["category_dominance_gap"] = 0.25
+                this["non_alcoholic_beverage_frequency"] = 0.45
+                this["category_stability_score"] = 0.60
                 this["other_value_pct"] = 0.05
                 this["hygiene_cleaning_cooccurrence_frequency"] = 0.12
-                this["basic_produce_cooccurrence_frequency"] = 0.22
-                this["alcohol_snack_cooccurrence_frequency"] = 0.18
+                this["soft_drink_frequency"] = 0.30
+                this["ticket_variation_coefficient"] = 0.18
             }
         assertEquals(MODEL_FINAL_FEATURES, defaults.keys.toList())
         overrides.forEach { (key, value) ->

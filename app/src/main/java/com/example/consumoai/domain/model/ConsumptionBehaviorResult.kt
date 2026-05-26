@@ -32,6 +32,21 @@ data class ConsumptionBehaviorResult(
     val sanitizationNotes: List<FeatureSanitizationNote> = emptyList()
 )
 
+data class ProfileScoreSummary(
+    val profile: ConsumptionBehaviorProfile,
+    val score: Double
+)
+
+fun ConsumptionBehaviorResult.topProfiles(limit: Int = 3): List<ProfileScoreSummary> {
+    if (limit <= 0) return emptyList()
+    return profileScores.entries
+        .sortedByDescending { it.value }
+        .take(limit)
+        .map { (profile, score) ->
+            ProfileScoreSummary(profile = profile, score = score)
+        }
+}
+
 enum class BehaviorClassificationSource {
     // Saída produzida pelo modelo treinado/servido pelo backend.
     TRAINED_MODEL,
